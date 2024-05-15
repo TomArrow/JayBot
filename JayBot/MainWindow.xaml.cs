@@ -741,6 +741,16 @@ namespace JayBot
             }
         }
 
+        // Logic on how regularly we mention someone at most depending on how active he is
+        // Last j 1 day ago: 4.8 minutes (its still limited to like 15 minutes elsewhere)
+        // Last j 7 days ago: 54 minutes
+        // Last j 14 days ago: 129 minutes
+        // Last j 1 month ago: 5.6 hours
+        // Last j 2 months ago: 13.35 hours
+        // In addition, people who haven't j'd for very long are only @ towards the end of filling a queue, to get the last few js
+        private const double daysSinceJExponent = 1.25;// 1.55;
+        private const double daysSinceJFactor = 4.8;
+
         private async Task MainLoopForChannel(UInt64 channelId)
         {
             if (!currentBotInfo.ContainsKey(channelId))
@@ -769,6 +779,7 @@ namespace JayBot
                 doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 30;
                 foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
                 {
+                    double daysSinceJ = 0;
                     if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
                     {
                         continue;
@@ -781,13 +792,14 @@ namespace JayBot
                     {
                         continue; // Leave him alone.
                     }
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < 60)
-                    {
-                        continue; // Was already mentioned in last 60 minutes, don't bother him.
-                    }
                     if (!thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 7)
                     {
                         continue; // Didn't play in the past 7 days, leave him alone
+                    }
+                    daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
+                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(60.0, daysSinceJFactor*Math.Pow(daysSinceJ,daysSinceJExponent)))
+                    {
+                        continue; // Was already mentioned in last 60 minutes, don't bother him.
                     }
                     if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 30)
                     {
@@ -803,6 +815,7 @@ namespace JayBot
                 doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 15;
                 foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
                 {
+                    double daysSinceJ = 0;
                     if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
                     {
                         continue;
@@ -815,13 +828,14 @@ namespace JayBot
                     {
                         continue; // Leave him alone.
                     }
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < 30)
-                    {
-                        continue; // Was already mentioned in last 30 minutes, don't bother him.
-                    }
                     if (!thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 31)
                     {
                         continue; // Didn't play in the past 31 days, leave him alone
+                    }
+                    daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
+                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(30.0, daysSinceJFactor*Math.Pow(daysSinceJ,daysSinceJExponent)))
+                    {
+                        continue; // Was already mentioned in last 30 minutes, don't bother him.
                     }
                     if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 20)
                     {
@@ -835,6 +849,7 @@ namespace JayBot
                 doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 5;
                 foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
                 {
+                    double daysSinceJ = 0;
                     if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
                     {
                         continue;
@@ -847,13 +862,14 @@ namespace JayBot
                     {
                         continue; // Leave him alone.
                     }
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < 15)
-                    {
-                        continue; // Was already mentioned in last 15 minutes, don't bother him.
-                    }
                     if (!thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 90)
                     {
                         continue; // Didn't play in the past 90 days, leave him alone
+                    }
+                    daysSinceJ = (DateTime.UtcNow -thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
+                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(15.0, daysSinceJFactor*Math.Pow(daysSinceJ, daysSinceJExponent)))
+                    {
+                        continue; // Was already mentioned in last 15 minutes, don't bother him.
                     }
                     if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 10)
                     {
