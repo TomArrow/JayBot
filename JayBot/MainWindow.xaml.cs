@@ -41,7 +41,7 @@ namespace JayBot
 
         ConcurrentDictionary<UInt64, string[]> channels = new ConcurrentDictionary<ulong, string[]>();
 
-        public bool TestMode { get; set; } = true;
+        public bool TestMode { get; set; } = false;
 
         public MainWindow()
         {
@@ -905,14 +905,15 @@ namespace JayBot
             // @everyone?
             if (doEveryone)
             {
+                int playerDelta = botInfo.totalPlayerCount - botInfo.joinedPlayerCount;
                 metaInfo[channelId].latestEveryoneMention = DateTime.UtcNow;
                 if (TestMode)
                 {
-                    enqueueMessage($"@ everyone", channel.Id);
+                    enqueueMessage($"@ everyone {playerDelta}", channel.Id);
 
                 } else
                 {
-                    enqueueMessage($"@everyone", channel.Id);
+                    enqueueMessage($"@everyone {playerDelta}", channel.Id);
                 }
             }
 
