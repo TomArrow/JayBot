@@ -805,6 +805,10 @@ namespace JayBot
                     {
                         continue; // He was here not too long ago, we don't need to explicitly tell him
                     }
+                    if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 30)
+                    {
+                        continue; // He was here not too long ago, we don't need to explicitly tell him
+                    }
                     prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
                 }
             }
@@ -841,6 +845,10 @@ namespace JayBot
                     {
                         continue; // He was here not too long ago, we don't need to explicitly tell him
                     }
+                    if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 20)
+                    {
+                        continue; // He was here not too long ago, we don't need to explicitly tell him
+                    }
                     prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
                 }
             } else
@@ -872,6 +880,10 @@ namespace JayBot
                         continue; // Was already mentioned in last 15 minutes, don't bother him.
                     }
                     if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 10)
+                    {
+                        continue; // He was here not too long ago, we don't need to explicitly tell him
+                    }
+                    if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 10)
                     {
                         continue; // He was here not too long ago, we don't need to explicitly tell him
                     }
