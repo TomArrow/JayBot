@@ -5,6 +5,7 @@ using SQLite.Net2;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -753,199 +754,212 @@ namespace JayBot
 
         private async Task MainLoopForChannel(UInt64 channelId)
         {
-            if (!currentBotInfo.ContainsKey(channelId))
+
+            try
             {
-                return;
-            }
-            BotMessageInfo botInfo = currentBotInfo[channelId];
 
-            if (pickingActive.ContainsKey(channelId) && pickingActive[channelId].HasValue) return; // don't do anything if pickup is active.
-
-            HashSet<UInt64> prefilteredUsers = new HashSet<ulong>();
-
-
-            bool doEveryone = false;
-
-            if (botInfo.joinedPlayerCount <= botInfo.totalPlayerCount / 4)
-            {
-                // Less than quarter full. 
-                // Just sit still for now, don't spam people
-                doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 60;
-            }
-            else if(botInfo.joinedPlayerCount <= botInfo.totalPlayerCount / 2)
-            {
-                // Less than half full. 
-                // Notify regular players
-                doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 30;
-                foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
+                if (!currentBotInfo.ContainsKey(channelId))
                 {
-                    double daysSinceJ = 0;
-                    if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
-                    {
-                        continue;
-                    }
-                    if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
-                    {
-                        continue; // Already in queue
-                    }
-                    if (thisUserChanActivity.Value.ignoreUser)
-                    {
-                        continue; // Leave him alone.
-                    }
-                    if (!thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 7)
-                    {
-                        continue; // Didn't play in the past 7 days, leave him alone
-                    }
-                    daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(120.0, daysSinceJFactor*Math.Pow(daysSinceJ,daysSinceJExponent)))
-                    {
-                        continue; // Was already mentioned in last 60 minutes, don't bother him.
-                    }
-                    if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 30)
-                    {
-                        continue; // He was here not too long ago, we don't need to explicitly tell him
-                    }
-                    if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 30)
-                    {
-                        continue; // He was here not too long ago, we don't need to explicitly tell him
-                    }
-                    prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
+                    return;
                 }
-            }
-            else if(botInfo.joinedPlayerCount <= (botInfo.totalPlayerCount * 3/4))
-            {
-                // Less than three quarters full
-                // Notify a bit more aggressively
-                doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 15;
-                foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
-                {
-                    double daysSinceJ = 0;
-                    if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
-                    {
-                        continue;
-                    }
-                    if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
-                    {
-                        continue; // Already in queue
-                    }
-                    if (thisUserChanActivity.Value.ignoreUser)
-                    {
-                        continue; // Leave him alone.
-                    }
-                    if (!thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 31)
-                    {
-                        continue; // Didn't play in the past 31 days, leave him alone
-                    }
-                    daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(70.0, daysSinceJFactor*Math.Pow(daysSinceJ,daysSinceJExponent)))
-                    {
-                        continue; // Was already mentioned in last 30 minutes, don't bother him.
-                    }
-                    if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 20)
-                    {
-                        continue; // He was here not too long ago, we don't need to explicitly tell him
-                    }
-                    if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 20)
-                    {
-                        continue; // He was here not too long ago, we don't need to explicitly tell him
-                    }
-                    prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
-                }
-            } else
-            {
-                // Almost full. Go hard.
-                doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 5;
-                foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
-                {
-                    double daysSinceJ = 0;
-                    if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
-                    {
-                        continue;
-                    }
-                    if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
-                    {
-                        continue; // Already in queue
-                    }
-                    if (thisUserChanActivity.Value.ignoreUser)
-                    {
-                        continue; // Leave him alone.
-                    }
-                    if (!thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 90)
-                    {
-                        continue; // Didn't play in the past 90 days, leave him alone
-                    }
-                    daysSinceJ = (DateTime.UtcNow -thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(40.0, daysSinceJFactor*Math.Pow(daysSinceJ, daysSinceJExponent)))
-                    {
-                        continue; // Was already mentioned in last 15 minutes, don't bother him.
-                    }
-                    if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 10)
-                    {
-                        continue; // He was here not too long ago, we don't need to explicitly tell him
-                    }
-                    if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 10)
-                    {
-                        continue; // He was here not too long ago, we don't need to explicitly tell him
-                    }
-                    prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
-                }
-            }
+                BotMessageInfo botInfo = currentBotInfo[channelId];
 
-            // Now check which of the prefiltered users are members still.
-            DSharpPlus.Entities.DiscordChannel channel = await discordClient.GetChannelAsync(channelId);
-            var guild = channel.Guild;
-            var members = await guild.GetAllMembersAsync();
-            HashSet<UInt64> usersWhoAreStillInTheDiscord = new HashSet<ulong>();
-            Dictionary<UInt64, DiscordMember> memberDetails = new Dictionary<ulong, DiscordMember>();
-            foreach (var member in members)
-            {
-                if (prefilteredUsers.Contains(member.Id))
+                if (pickingActive.ContainsKey(channelId) && pickingActive[channelId].HasValue) return; // don't do anything if pickup is active.
+
+                HashSet<UInt64> prefilteredUsers = new HashSet<ulong>();
+
+
+                bool doEveryone = false;
+
+                if (botInfo.joinedPlayerCount <= botInfo.totalPlayerCount / 4)
                 {
-                    memberDetails[member.Id] = member;
-                    usersWhoAreStillInTheDiscord.Add(member.Id);
+                    // Less than quarter full. 
+                    // Just sit still for now, don't spam people
+                    doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 60;
                 }
-            }
-            StringBuilder message = new StringBuilder();
-            if (TestMode)
-            {
-                message.Append("Testing, would @: ");
-            }
-            foreach(var user in usersWhoAreStillInTheDiscord)
-            {
-                UpdateUserMentioned(user,channel.Id,DateTime.UtcNow);
+                else if (botInfo.joinedPlayerCount <= botInfo.totalPlayerCount / 2)
+                {
+                    // Less than half full. 
+                    // Notify regular players
+                    doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 30;
+                    foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
+                    {
+                        double daysSinceJ = 0;
+                        if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
+                        {
+                            continue;
+                        }
+                        if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
+                        {
+                            continue; // Already in queue
+                        }
+                        if (thisUserChanActivity.Value.ignoreUser)
+                        {
+                            continue; // Leave him alone.
+                        }
+                        if (!thisUserChanActivity.Value.lastTimeJoined.HasValue || (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 7)
+                        {
+                            continue; // Didn't play in the past 7 days, leave him alone
+                        }
+                        daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
+                        if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(120.0, daysSinceJFactor * Math.Pow(daysSinceJ, daysSinceJExponent)))
+                        {
+                            continue; // Was already mentioned in last 60 minutes, don't bother him.
+                        }
+                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 30)
+                        {
+                            continue; // He was here not too long ago, we don't need to explicitly tell him
+                        }
+                        if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 30)
+                        {
+                            continue; // He was here not too long ago, we don't need to explicitly tell him
+                        }
+                        prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
+                    }
+                }
+                else if (botInfo.joinedPlayerCount <= (botInfo.totalPlayerCount * 3 / 4))
+                {
+                    // Less than three quarters full
+                    // Notify a bit more aggressively
+                    doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 15;
+                    foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
+                    {
+                        double daysSinceJ = 0;
+                        if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
+                        {
+                            continue;
+                        }
+                        if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
+                        {
+                            continue; // Already in queue
+                        }
+                        if (thisUserChanActivity.Value.ignoreUser)
+                        {
+                            continue; // Leave him alone.
+                        }
+                        if (!thisUserChanActivity.Value.lastTimeJoined.HasValue || (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 31)
+                        {
+                            continue; // Didn't play in the past 31 days, leave him alone
+                        }
+                        daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
+                        if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(70.0, daysSinceJFactor * Math.Pow(daysSinceJ, daysSinceJExponent)))
+                        {
+                            continue; // Was already mentioned in last 30 minutes, don't bother him.
+                        }
+                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 20)
+                        {
+                            continue; // He was here not too long ago, we don't need to explicitly tell him
+                        }
+                        if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 20)
+                        {
+                            continue; // He was here not too long ago, we don't need to explicitly tell him
+                        }
+                        prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
+                    }
+                }
+                else
+                {
+                    // Almost full. Go hard.
+                    doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 5;
+                    foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
+                    {
+                        double daysSinceJ = 0;
+                        if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
+                        {
+                            continue;
+                        }
+                        if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
+                        {
+                            continue; // Already in queue
+                        }
+                        if (thisUserChanActivity.Value.ignoreUser)
+                        {
+                            continue; // Leave him alone.
+                        }
+                        if (!thisUserChanActivity.Value.lastTimeJoined.HasValue || (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 90)
+                        {
+                            continue; // Didn't play in the past 90 days, leave him alone
+                        }
+                        daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
+                        if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(40.0, daysSinceJFactor * Math.Pow(daysSinceJ, daysSinceJExponent)))
+                        {
+                            continue; // Was already mentioned in last 15 minutes, don't bother him.
+                        }
+                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 10)
+                        {
+                            continue; // He was here not too long ago, we don't need to explicitly tell him
+                        }
+                        if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 10)
+                        {
+                            continue; // He was here not too long ago, we don't need to explicitly tell him
+                        }
+                        prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
+                    }
+                }
+
+                // Now check which of the prefiltered users are members still.
+                DSharpPlus.Entities.DiscordChannel channel = await discordClient.GetChannelAsync(channelId);
+                var guild = channel.Guild;
+                var members = await guild.GetAllMembersAsync();
+                HashSet<UInt64> usersWhoAreStillInTheDiscord = new HashSet<ulong>();
+                Dictionary<UInt64, DiscordMember> memberDetails = new Dictionary<ulong, DiscordMember>();
+                foreach (var member in members)
+                {
+                    if (prefilteredUsers.Contains(member.Id))
+                    {
+                        memberDetails[member.Id] = member;
+                        usersWhoAreStillInTheDiscord.Add(member.Id);
+                    }
+                }
+                StringBuilder message = new StringBuilder();
                 if (TestMode)
                 {
-                    if (memberDetails.ContainsKey(user))
+                    message.Append("Testing, would @: ");
+                }
+                foreach (var user in usersWhoAreStillInTheDiscord)
+                {
+                    UpdateUserMentioned(user, channel.Id, DateTime.UtcNow);
+                    if (TestMode)
                     {
-                        message.Append($"{memberDetails[user].DisplayName} ");
+                        if (memberDetails.ContainsKey(user))
+                        {
+                            message.Append($"{memberDetails[user].DisplayName} ");
+                        }
                     }
-                } else
-                {
-                    message.Append($"<@{user}> ");
+                    else
+                    {
+                        message.Append($"<@{user}> ");
+                    }
                 }
-            }
-            if (usersWhoAreStillInTheDiscord.Count > 0) {
+                if (usersWhoAreStillInTheDiscord.Count > 0)
+                {
 
-                enqueueMessage(message.ToString(),channel.Id);
-            }
+                    enqueueMessage(message.ToString(), channel.Id);
+                }
 
-            message.Clear();
-            // @everyone?
-            if (doEveryone)
+                message.Clear();
+                // @everyone?
+                if (doEveryone)
+                {
+                    int playerDelta = botInfo.totalPlayerCount - botInfo.joinedPlayerCount;
+                    metaInfo[channelId].latestEveryoneMention = DateTime.UtcNow;
+                    if (TestMode)
+                    {
+                        enqueueMessage($"@ everyone {playerDelta}", channel.Id);
+
+                    }
+                    else
+                    {
+                        enqueueMessage($"@everyone {playerDelta}", channel.Id);
+                    }
+                }
+
+                SaveData();
+            }catch(Exception e)
             {
-                int playerDelta = botInfo.totalPlayerCount - botInfo.joinedPlayerCount;
-                metaInfo[channelId].latestEveryoneMention = DateTime.UtcNow;
-                if (TestMode)
-                {
-                    enqueueMessage($"@ everyone {playerDelta}", channel.Id);
-
-                } else
-                {
-                    enqueueMessage($"@everyone {playerDelta}", channel.Id);
-                }
+                Debug.WriteLine(e.ToString());
+                Helpers.logToFile(e.ToString());
             }
-
-            SaveData();
         }
 
         private void resetPickingBtn_Click(object sender, RoutedEventArgs e)
