@@ -797,7 +797,7 @@ namespace JayBot
                         continue; // Didn't play in the past 7 days, leave him alone
                     }
                     daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(60.0, daysSinceJFactor*Math.Pow(daysSinceJ,daysSinceJExponent)))
+                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(120.0, daysSinceJFactor*Math.Pow(daysSinceJ,daysSinceJExponent)))
                     {
                         continue; // Was already mentioned in last 60 minutes, don't bother him.
                     }
@@ -837,7 +837,7 @@ namespace JayBot
                         continue; // Didn't play in the past 31 days, leave him alone
                     }
                     daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(30.0, daysSinceJFactor*Math.Pow(daysSinceJ,daysSinceJExponent)))
+                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(70.0, daysSinceJFactor*Math.Pow(daysSinceJ,daysSinceJExponent)))
                     {
                         continue; // Was already mentioned in last 30 minutes, don't bother him.
                     }
@@ -875,7 +875,7 @@ namespace JayBot
                         continue; // Didn't play in the past 90 days, leave him alone
                     }
                     daysSinceJ = (DateTime.UtcNow -thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(15.0, daysSinceJFactor*Math.Pow(daysSinceJ, daysSinceJExponent)))
+                    if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(40.0, daysSinceJFactor*Math.Pow(daysSinceJ, daysSinceJExponent)))
                     {
                         continue; // Was already mentioned in last 15 minutes, don't bother him.
                     }
