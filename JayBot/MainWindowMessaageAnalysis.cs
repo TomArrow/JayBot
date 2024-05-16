@@ -33,7 +33,7 @@ namespace JayBot
             DSharpPlus.Entities.DiscordChannel channel = await discordClient.GetChannelAsync(channelId);
 
             var guild = await discordClient.GetGuildAsync(channel.GuildId.GetValueOrDefault(0));
-            var botUser = await discordClient.GetUserAsync(botId);
+            //var botUser = await discordClient.GetUserAsync(botId);
 
             members[channelId] = new ConcurrentBag<DSharpPlus.Entities.DiscordMember>();
             IReadOnlyCollection<DSharpPlus.Entities.DiscordMember> membersTmp = await guild.GetAllMembersAsync();
@@ -71,10 +71,11 @@ namespace JayBot
             DateTime newestMessageTime = newestMessage.CreationTimestamp.UtcDateTime;
             DSharpPlus.Entities.DiscordMessage oldestMessage = messages.Count > 0 ? messages[messages.Count - 1] : null;
 
-            while (oldestMessage != null && (DateTime.UtcNow - oldestMessage.CreationTimestamp.UtcDateTime).TotalDays < 180)
+            while (oldestMessage != null && (DateTime.UtcNow - oldestMessage.CreationTimestamp.UtcDateTime).TotalDays < 600)
             {
-                lastMessageAnalyzedText.Text = "Message backwards analysis done to: (max 180 days) " + oldestMessage.CreationTimestamp.UtcDateTime.ToString();
+                lastMessageAnalyzedText.Text = "Message backwards analysis done to: (max 600 days) " + oldestMessage.CreationTimestamp.UtcDateTime.ToString();
                 messages = await channel.GetMessagesBeforeAsync(oldestMessage.Id);
+                if (messages.Count == 0) break;
                 AnalyzeMessages(messages, channel, ref newestBotInfo);
                 SaveData();
                 oldestMessage = messages.Count > 0 ? messages[messages.Count - 1] : null;
@@ -109,7 +110,7 @@ namespace JayBot
         {
             DateTime thisMessageTime = message.CreationTimestamp.UtcDateTime;
             UpdateUser(message.Author);
-            if (message.Author.Id == botId)
+            if (message.Author.Id == botId || message.Author.Id == botId2)
             {
                 BotMessageInfo result = analyzeBotMessage(message);
                 if (result is null) return null;
@@ -333,6 +334,7 @@ namespace JayBot
                 }
                 return new BotMessageInfo()
                 {
+                    utcTime = msg.CreationTimestamp.UtcDateTime,
                     members = new DSharpPlus.Entities.DiscordMember[0],
                     userIds = new UInt64[0],
 
@@ -377,6 +379,7 @@ namespace JayBot
 
             return new BotMessageInfo()
             {
+                utcTime = msg.CreationTimestamp.UtcDateTime,
                 members = membersFound.ToArray(),
                 userIds = userIds.ToArray()
                  ,

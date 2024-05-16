@@ -38,6 +38,7 @@ namespace JayBot
         }
         class BotMessageInfo
         {
+            public DateTime utcTime;
             public UInt64[] userIds;
             public DSharpPlus.Entities.DiscordMember[] members;
             public string queuename;
@@ -50,6 +51,7 @@ namespace JayBot
         private DiscordClient discordClient = null;
 
         ulong botId = 845098024421425183;
+        ulong botId2 = 177022387903004673;
         //ulong? channelId = null;
 
         Regex regex = new Regex(@">\s*\*\*((\d+)v(\d+)[^*]*)\*\*\s*\(\s*(\d+)\s*\/\s*(\d+)\)\s*\|\s*((`([^`]+)`\/?)+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -114,6 +116,11 @@ namespace JayBot
             //test();
             startMessageRunner();
             start();
+            foreach (var channel in channels)
+            {
+                scanChannelHistory(channel.Key);
+            }
+            // Do second time quick because that might have taken a while and not gotten all
             foreach (var channel in channels)
             {
                 scanChannelHistory(channel.Key);
@@ -341,7 +348,7 @@ namespace JayBot
                 currentBotInfo[channelId] = botInfo;
                 if (botInfo.pickingIndicator == QueuePickupIndicator.Picking)
                 {
-                    pickingActive[channelId] = DateTime.UtcNow;
+                    pickingActive[channelId] = botInfo.utcTime;
                 }
                 else if (botInfo.pickingIndicator == QueuePickupIndicator.PickingEnded)
                 {
@@ -352,7 +359,7 @@ namespace JayBot
                     if (pickingActive.ContainsKey(channelId))
                     {
                         DateTime? lastPicking = pickingActive[channelId];
-                        if (lastPicking.HasValue && (DateTime.UtcNow - lastPicking.Value).TotalMinutes > 60)
+                        if (lastPicking.HasValue && (botInfo.utcTime - lastPicking.Value).TotalMinutes > 60)
                         {
                             // Reset after 1 hour in case something glitches. dumb solution but whatever.
                             pickingActive[channelId] = null;
