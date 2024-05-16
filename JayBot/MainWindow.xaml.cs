@@ -310,28 +310,7 @@ namespace JayBot
 
             BotMessageInfo botInfo = analyzeMessage(e.Message, channel);
 
-            if(botInfo != null)
-            {
-                currentBotInfo[channel.Id] = botInfo;
-                if(botInfo.pickingIndicator == QueuePickupIndicator.Picking)
-                {
-                    pickingActive[channel.Id] = DateTime.UtcNow;
-                } else if (botInfo.pickingIndicator == QueuePickupIndicator.PickingEnded)
-                {
-                    pickingActive[channel.Id] = null;
-                } else if (botInfo.pickingIndicator == QueuePickupIndicator.Unknown)
-                {
-                    if (pickingActive.ContainsKey(channel.Id))
-                    {
-                        DateTime? lastPicking = pickingActive[channel.Id];
-                        if (lastPicking.HasValue &&  (DateTime.UtcNow - lastPicking.Value).TotalMinutes > 60)
-                        {
-                            // Reset after 1 hour in case something glitches. dumb solution but whatever.
-                            pickingActive[channel.Id] = null;
-                        }
-                    }
-                }
-            }
+            ProcessLatestBotMessage(botInfo, channel.Id);
 
             try
             {
@@ -355,7 +334,33 @@ namespace JayBot
             }
         }
 
-
+        private void ProcessLatestBotMessage(BotMessageInfo botInfo, UInt64 channelId)
+        {
+            if (botInfo != null)
+            {
+                currentBotInfo[channelId] = botInfo;
+                if (botInfo.pickingIndicator == QueuePickupIndicator.Picking)
+                {
+                    pickingActive[channelId] = DateTime.UtcNow;
+                }
+                else if (botInfo.pickingIndicator == QueuePickupIndicator.PickingEnded)
+                {
+                    pickingActive[channelId] = null;
+                }
+                else if (botInfo.pickingIndicator == QueuePickupIndicator.Unknown)
+                {
+                    if (pickingActive.ContainsKey(channelId))
+                    {
+                        DateTime? lastPicking = pickingActive[channelId];
+                        if (lastPicking.HasValue && (DateTime.UtcNow - lastPicking.Value).TotalMinutes > 60)
+                        {
+                            // Reset after 1 hour in case something glitches. dumb solution but whatever.
+                            pickingActive[channelId] = null;
+                        }
+                    }
+                }
+            }
+        }
 
 
         static readonly string dbPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JayBot", "data.db");

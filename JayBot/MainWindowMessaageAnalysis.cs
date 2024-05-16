@@ -61,7 +61,9 @@ namespace JayBot
 
             IReadOnlyList<DSharpPlus.Entities.DiscordMessage> messages = await channel.GetMessagesAsync();
 
-            AnalyzeMessages(messages, channel);
+            BotMessageInfo newestBotInfo = null;
+
+            AnalyzeMessages(messages, channel, ref newestBotInfo);
             SaveData();
 
 
@@ -73,7 +75,7 @@ namespace JayBot
             {
                 lastMessageAnalyzedText.Text = "Message backwards analysis done to: (max 180 days) " + oldestMessage.CreationTimestamp.UtcDateTime.ToString();
                 messages = await channel.GetMessagesBeforeAsync(oldestMessage.Id);
-                AnalyzeMessages(messages, channel);
+                AnalyzeMessages(messages, channel, ref newestBotInfo);
                 SaveData();
                 oldestMessage = messages.Count > 0 ? messages[messages.Count - 1] : null;
                 if (metaInfo[channel.Id].latestMessageCrawled.HasValue && metaInfo[channel.Id].latestMessageCrawled.Value > oldestMessage.CreationTimestamp.UtcDateTime)
@@ -85,15 +87,21 @@ namespace JayBot
             metaInfo[channel.Id].latestMessageCrawled = newestMessageTime;
             lastMessageAnalyzedText.Text += " [Finished]";
 
+            ProcessLatestBotMessage(newestBotInfo, channel.Id);
+
             SaveData();
         }
 
-        private void AnalyzeMessages(IReadOnlyList<DSharpPlus.Entities.DiscordMessage> messages, DSharpPlus.Entities.DiscordChannel channel)
+        private void AnalyzeMessages(IReadOnlyList<DSharpPlus.Entities.DiscordMessage> messages, DSharpPlus.Entities.DiscordChannel channel, ref BotMessageInfo newestBotInfo)
         {
             if (messages is null) return;
             foreach (DSharpPlus.Entities.DiscordMessage message in messages)
             {
-                analyzeMessage(message, channel);
+                BotMessageInfo botInfo = analyzeMessage(message, channel);
+                if(newestBotInfo is null)
+                {
+                    newestBotInfo = botInfo;
+                }
             }
         }
 
