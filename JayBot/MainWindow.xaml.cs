@@ -68,9 +68,9 @@ namespace JayBot
         ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>> members = new ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>>();
         ConcurrentDictionary<UInt64, CrawledMessage> analyzedMessages = new ConcurrentDictionary<ulong, CrawledMessage>();
 
-        public bool TestMode { get; set; } = false;
-        public bool MentionsActive { get; set; } = false;
-        public bool SilentMode { get; set; } = false;
+        public bool TestMode { get; set; } = true;
+        public bool MentionsActive { get; set; } = true;
+        public bool SilentMode { get; set; } = true;
 
         public MainWindow()
         {
@@ -630,9 +630,11 @@ namespace JayBot
 
                 }
 
+
+                DateTime? lastGameOver = metaInfo[channelId].lastGameOver;
                 doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > mentionSettings.EveryoneMinutesDelayMin;
                 doMessage = !metaInfo[channelId].latestMentionMessageSent.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestMentionMessageSent.Value).TotalMinutes > mentionSettings.MentionMessaageMinutesDelayMin;
-                if (mentionSettings.doMentions)
+                //if (mentionSettings.doMentions)
                 {
                     foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
                     {
@@ -667,7 +669,7 @@ namespace JayBot
                         {
                             continue; // This is not a common time for this player to join
                         }
-                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > mentionSettings.LastTimeWrittenMessageDaysMax)
+                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalDays > mentionSettings.LastTimeWrittenMessageDaysMax)
                         {
                             continue; // Didn't write for quite some time
                         }
@@ -684,20 +686,43 @@ namespace JayBot
                         }
                         if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < lastTimeMentionedMin)
                         {
-                            continue; // Was already mentioned in last 15 minutes, don't bother him.
+                            if (lastGameOver.HasValue && lastGameOver > thisUserChanActivity.Value.lastTimeMentioned && thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays < 1.0)
+                            {
+                                // Continue anyway. He was mentioned recently yes, but a game ended since then.
+                            } else
+                            {
+                                continue; // Was already mentioned in last 15 minutes, don't bother him.
+                            }
                         }
                         if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < mentionSettings.LastTimeWrittenMessageMinutesMin)
                         {
-                            continue; // He was here not too long ago, we don't need to explicitly tell him
+                            if (lastGameOver.HasValue && lastGameOver > thisUserChanActivity.Value.lastTimeWrittenMessage && thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays < 1.0)
+                            {
+                                // Continue anyway. He was here recently yes, but a game ended since then.
+                            }
+                            else
+                            {
+                                continue; // He was here not too long ago, we don't need to explicitly tell him
+                            }
                         }
                         if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < mentionSettings.LastTimeReactedMinutesMin)
                         {
-                            continue; // He was here not too long ago, we don't need to explicitly tell him
+                            if (lastGameOver.HasValue && lastGameOver > thisUserChanActivity.Value.lastTimeReacted && thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays < 1.0)
+                            {
+                                // Continue anyway. He was here recently yes, but a game ended since then.
+                            }
+                            else
+                            {
+                                continue; // He was here not too long ago, we don't need to explicitly tell him
+                            }
                         }
                         prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
                     }
                 }
-                    
+                if (!mentionSettings.doMentions && !TestMode)
+                {
+                    prefilteredUsers.Clear();
+                }
                 
 
                 // Now check which of the prefiltered users are members still.

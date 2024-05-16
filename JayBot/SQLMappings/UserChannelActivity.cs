@@ -29,6 +29,7 @@ namespace JayBot.SQLMappings
             {
                 total += hourlyJs;
             }
+            if (total <= 0) return 0;
             return (double)hourlyJsHistorical[hour]*24.0 / total;
         }
         public Int64[] hourlyJsHistorical = new Int64[24];
