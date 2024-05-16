@@ -500,7 +500,7 @@ namespace JayBot
             public bool doMentions;
             public double EveryoneMinutesDelayMin;
             public double MentionMessaageMinutesDelayMin;
-            public double HourlyPercentageMin;
+            public double HourlyRatioMin;
             public double LastTimeJoinedDaysMax;
             public double LastTimeMentionedMinutesMin;
             public double LastTimeExpiredFastTrackMax;
@@ -515,7 +515,7 @@ namespace JayBot
                 doMentions = false,
                 EveryoneMinutesDelayMin = 60,
                 MentionMessaageMinutesDelayMin= 5,
-                 HourlyPercentageMin = 1.0,
+                 HourlyRatioMin = 1.0,
                  LastTimeJoinedDaysMax = 1.0,//7.0,
                  LastTimeMentionedMinutesMin=120.0,
                  LastTimeExpiredFastTrackMax = 5.0,
@@ -527,7 +527,7 @@ namespace JayBot
                 doMentions = true,
                 EveryoneMinutesDelayMin = 30,
                 MentionMessaageMinutesDelayMin= 5,
-                 HourlyPercentageMin = 1.0,
+                 HourlyRatioMin = 1.0,
                  LastTimeJoinedDaysMax = 3.0,//7.0,
                  LastTimeMentionedMinutesMin=120.0,
                  LastTimeExpiredFastTrackMax = 10.0,
@@ -539,7 +539,7 @@ namespace JayBot
                 doMentions = true,
                 EveryoneMinutesDelayMin = 15,
                 MentionMessaageMinutesDelayMin= 5,
-                 HourlyPercentageMin = 0.25,
+                 HourlyRatioMin = 0.25,
                  LastTimeJoinedDaysMax = 14.0,//7.0,
                  LastTimeMentionedMinutesMin=70.0,
                  LastTimeExpiredFastTrackMax = 20.0,
@@ -551,7 +551,7 @@ namespace JayBot
                 doMentions = true,
                 EveryoneMinutesDelayMin = 5,
                 MentionMessaageMinutesDelayMin= 2,
-                 HourlyPercentageMin = 0.1,
+                 HourlyRatioMin = 0.1,
                  LastTimeJoinedDaysMax = 30.0,//7.0,
                  LastTimeMentionedMinutesMin=20.0,
                  LastTimeExpiredFastTrackMax = 30.0,
@@ -563,7 +563,7 @@ namespace JayBot
                 doMentions = true,
                 EveryoneMinutesDelayMin = 3,
                 MentionMessaageMinutesDelayMin= 2,
-                 HourlyPercentageMin = 0.05,
+                 HourlyRatioMin = 0.05,
                  LastTimeJoinedDaysMax = 120.0,//7.0,
                  LastTimeMentionedMinutesMin=10.0,
                  LastTimeExpiredFastTrackMax = 60.0,
@@ -665,8 +665,20 @@ namespace JayBot
                                 continue;
                             }
                         }
-                        if (thisUserChanActivity.Value.getNormalizedHourlyJPercentage(DateTime.UtcNow.Hour) < mentionSettings.HourlyPercentageMin)
+                        double hourlyRatio = thisUserChanActivity.Value.getNormalizedHourlyJRatio(DateTime.UtcNow.Hour);
+                        if (hourlyRatio < mentionSettings.HourlyRatioMin)
                         {
+                            if(hourlyRatio > 0)
+                            {
+                                if (users.ContainsKey(thisUserChanActivity.Key.Item1))
+                                {
+                                    Debug.WriteLine($"Hourly ratio too low: Player {users[thisUserChanActivity.Key.Item1].userName}, ratio {hourlyRatio}, required ratio {mentionSettings.HourlyRatioMin}");
+                                }
+                                else
+                                {
+                                    Debug.WriteLine($"Hourly ratio too low: Unknown user, ratio {hourlyRatio}, required ratio {mentionSettings.HourlyRatioMin}");
+                                }
+                            }
                             continue; // This is not a common time for this player to join
                         }
                         if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalDays > mentionSettings.LastTimeWrittenMessageDaysMax)

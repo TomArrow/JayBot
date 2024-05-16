@@ -22,7 +22,7 @@ namespace JayBot.SQLMappings
         public DateTime? lastTimeExpired { get; set; } = null;
         public bool ignoreUser { get; set; } = false;
         public bool isCurrentlyMember { get; set; } = false;
-        public double getNormalizedHourlyJPercentage(int hour)
+        public double getNormalizedHourlyJRatio(int hour)
         {
             double total = 0;
             foreach (Int64 hourlyJs in hourlyJsHistorical)
