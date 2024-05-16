@@ -67,6 +67,7 @@ namespace JayBot
         ConcurrentDictionary<UInt64, MetaInfo> metaInfo = new ConcurrentDictionary<ulong, MetaInfo>();
         ConcurrentDictionary<UInt64, BotMessageInfo> currentBotInfo = new ConcurrentDictionary<ulong, BotMessageInfo>();
         ConcurrentDictionary<UInt64, DateTime?> lastPlayerCountIncreaseWithoutEveryoneMention = new ConcurrentDictionary<ulong, DateTime?>();
+        ConcurrentDictionary<UInt64, int> messagesSinceLastWho = new ConcurrentDictionary<ulong, int>();
         ConcurrentDictionary<UInt64, DateTime?> pickingActive = new ConcurrentDictionary<ulong, DateTime?>();
         ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>> members = new ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>>();
         ConcurrentDictionary<UInt64, CrawledMessage> analyzedMessages = new ConcurrentDictionary<ulong, CrawledMessage>();
@@ -318,6 +319,28 @@ namespace JayBot
 
             BotMessageInfo botInfo = analyzeMessage(e.Message, channel);
 
+            if ((e.Message.Content?.Trim().ToLowerInvariant().Equals("=who",StringComparison.InvariantCultureIgnoreCase)).GetValueOrDefault(false))
+            {
+                messagesSinceLastWho[channel.Id] = 0;
+            } else {
+                if (!messagesSinceLastWho.ContainsKey(channel.Id))
+                {
+                    messagesSinceLastWho[channel.Id] = 0;
+                }
+                messagesSinceLastWho[channel.Id]++;
+                if(e.Message.Embeds != null)
+                {
+                    foreach (var embed in e.Message.Embeds)
+                    {
+                        if(embed.Thumbnail != null)
+                        {
+                            int lines = Math.Min(embed.Thumbnail.Height,350) / 50;
+                            messagesSinceLastWho[channel.Id] += lines;
+                        }
+                    }
+                }
+            }
+
             ProcessLatestBotMessage(botInfo, channel.Id);
 
             try
@@ -346,6 +369,7 @@ namespace JayBot
         {
             if (botInfo != null)
             {
+                bool playerCountIncreased = false;
                 if (currentBotInfo.ContainsKey(channelId))
                 {
                     if(currentBotInfo[channelId].utcTime > botInfo.utcTime)
@@ -354,10 +378,15 @@ namespace JayBot
                     }
                     if(currentBotInfo[channelId].joinedPlayerCount < botInfo.joinedPlayerCount)
                     {
+                        playerCountIncreased = true;
                         lastPlayerCountIncreaseWithoutEveryoneMention[channelId] = DateTime.UtcNow;
                     }   
                 }
                 currentBotInfo[channelId] = botInfo;
+                if (playerCountIncreased)
+                {
+                    lastPlayerCountIncreaseWithoutEveryoneMention[channelId] = DateTime.UtcNow;
+                }
                 if (botInfo.pickingIndicator == QueuePickupIndicator.Picking)
                 {
                     pickingActive[channelId] = botInfo.utcTime;
@@ -763,7 +792,8 @@ namespace JayBot
                 {
                     prefilteredUsers.Clear();
                 }
-                
+
+                bool anyMsgSent = false;
 
                 // Now check which of the prefiltered users are members still.
                 DSharpPlus.Entities.DiscordChannel channel = await discordClient.GetChannelAsync(channelId);
@@ -804,6 +834,7 @@ namespace JayBot
 
                     enqueueMessage(message.ToString(), channel.Id);
                     metaInfo[channelId].latestMentionMessageSent = DateTime.UtcNow;
+                    anyMsgSent = true;
                 }
 
                 message.Clear();
@@ -821,7 +852,18 @@ namespace JayBot
                     {
                         enqueueMessage($"@everyone {playerDelta}", channel.Id);
                     }
+                    anyMsgSent = true;
                     lastPlayerCountIncreaseWithoutEveryoneMention[channelId] = null;
+                }
+
+                if (!messagesSinceLastWho.ContainsKey(channel.Id))
+                {
+                    messagesSinceLastWho[channel.Id] = 0;
+                }
+                if (anyMsgSent && messagesSinceLastWho[channel.Id]>=8)
+                {
+                    enqueueMessage("=who", channel.Id);
+                    messagesSinceLastWho[channel.Id] = 0;
                 }
 
                 SaveData();
