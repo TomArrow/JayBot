@@ -319,7 +319,7 @@ namespace JayBot
 
             BotMessageInfo botInfo = analyzeMessage(e.Message, channel);
 
-            if ((e.Message.Content?.Trim().ToLowerInvariant().Equals("=who",StringComparison.InvariantCultureIgnoreCase)).GetValueOrDefault(false))
+            if ((botInfo != null && botInfo.userIds != null && botInfo.userIds.Length > 0)|| (e.Message.Content?.Trim().ToLowerInvariant().Equals("=who",StringComparison.InvariantCultureIgnoreCase)).GetValueOrDefault(false))
             {
                 messagesSinceLastWho[channel.Id] = 0;
             } else {
