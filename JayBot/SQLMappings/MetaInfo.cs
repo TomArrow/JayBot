@@ -12,6 +12,8 @@ namespace JayBot.SQLMappings
         [PrimaryKey]
         public Int64 channelId { get; set; }
         public DateTime? latestMessageCrawled { get; set; }
+        public DateTime? latestMentionMessageSent { get; set; }
         public DateTime? latestEveryoneMention { get; set; }
+        public DateTime? lastGameOver { get; set; }
     }
 }

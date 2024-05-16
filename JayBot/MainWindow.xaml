@@ -12,7 +12,11 @@
             <ColumnDefinition Width="300"></ColumnDefinition>
         </Grid.ColumnDefinitions>
         <StackPanel>
-            <CheckBox IsChecked="{Binding TestMode,Mode=TwoWay}">Testrun</CheckBox>
+            <WrapPanel>
+                <CheckBox IsChecked="{Binding TestMode,Mode=TwoWay}" >Testrun</CheckBox>
+                <CheckBox IsChecked="{Binding MentionsActive,Mode=TwoWay}">Active</CheckBox>
+                <CheckBox IsChecked="{Binding SilentMode,Mode=TwoWay}">SilentMode</CheckBox>
+            </WrapPanel>
             <Button x:Name="scanHistoryBtn" Click="scanHistoryBtn_Click">Scan history</Button>
             <Button x:Name="resetPickingBtn" Click="resetPickingBtn_Click">Not Picking (reset if glitch)</Button>
             <TextBox x:Name="lastMessageAnalyzedText"></TextBox>
@@ -29,6 +33,7 @@
                     <Button x:Name="msgSendSendBtn" Click="msgSendSendBtn_Click">Send</Button>
                 </StackPanel>
             </GroupBox>
+            <TextBlock x:Name="silentLogTxt" TextWrapping="Wrap" ScrollViewer.CanContentScroll="True" Height="250" Background="LightGray"></TextBlock>
         </StackPanel>
         <!--<DataGrid Grid.Column="1" FontSize="10" IsReadOnly="True"  CanUserAddRows="False" DockPanel.Dock="Bottom" VerticalScrollBarVisibility="Auto" x:Name="membersGrid" AutoGenerateColumns="False" SelectionChanged="serverListDataGrid_SelectionChanged">
             <DataGrid.Columns>

@@ -29,6 +29,24 @@ namespace JayBot
     /// </summary>
     public partial class MainWindow : Window
     {
+
+        enum QueuePickupIndicator
+        {
+            Unknown,
+            Picking,
+            PickingEnded
+        }
+        class BotMessageInfo
+        {
+            public UInt64[] userIds;
+            public DSharpPlus.Entities.DiscordMember[] members;
+            public string queuename;
+            public int teamPlayerCount1, teamPlayerCount2;
+            public int totalPlayerCount, joinedPlayerCount;
+            public QueuePickupIndicator pickingIndicator = QueuePickupIndicator.Unknown;
+            public bool messageSeenBefore = false;
+        }
+
         private DiscordClient discordClient = null;
 
         ulong botId = 845098024421425183;
@@ -36,13 +54,23 @@ namespace JayBot
 
         Regex regex = new Regex(@">\s*\*\*((\d+)v(\d+)[^*]*)\*\*\s*\(\s*(\d+)\s*\/\s*(\d+)\)\s*\|\s*((`([^`]+)`\/?)+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex regexDraftStage = new Regex(@"\*\*((\d+)v(\d+)[^*]*)\*\*\s*is now on the draft stage!", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-        Regex regexGameResults = new Regex(@"```markdown(\\n|\n)((\d+)v(\d+)[^\(]*)\([^\)]*\)\s*results", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        Regex regexGameResults = new Regex(@"```markdown(?:\\n|\n)((\d+)v(\d+)[^\(]*)\([^\)]*\)\s*results", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex regexMatchCanceled = new Regex(@"your match has been canceled.\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex nicknameFilterRegex = new Regex(@"([`<>\*_\\\[\]\~])|((?=\s)[^ ])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        Regex playerExpiredRegex = new Regex(@"<@\s*(\d+)> were removed from all queues \(expire time ran off\)\.", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
         ConcurrentDictionary<UInt64, string[]> channels = new ConcurrentDictionary<ulong, string[]>();
+        ConcurrentDictionary<UInt64, User> users = new ConcurrentDictionary<UInt64, User>();
+        ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity> userChannelActivity = new ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity>();
+        ConcurrentDictionary<UInt64, MetaInfo> metaInfo = new ConcurrentDictionary<ulong, MetaInfo>();
+        ConcurrentDictionary<UInt64, BotMessageInfo> currentBotInfo = new ConcurrentDictionary<ulong, BotMessageInfo>();
+        ConcurrentDictionary<UInt64, DateTime?> pickingActive = new ConcurrentDictionary<ulong, DateTime?>();
+        ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>> members = new ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>>();
+        ConcurrentDictionary<UInt64, CrawledMessage> analyzedMessages = new ConcurrentDictionary<ulong, CrawledMessage>();
 
         public bool TestMode { get; set; } = false;
+        public bool MentionsActive { get; set; } = false;
+        public bool SilentMode { get; set; } = false;
 
         public MainWindow()
         {
@@ -160,7 +188,22 @@ namespace JayBot
                     }
                     if (messageToSend == null) continue; // Shouldn't be the case but just in case.
                     var channel = await discordClient.GetChannelAsync(messageToSend.Item2);
-                    await discordClient.SendMessageAsync(channel, messageToSend.Item1);
+                    if (SilentMode)
+                    {
+                        Dispatcher.Invoke(()=> {
+
+                            string currentText = silentLogTxt.Text;
+                            currentText += $"\n\n\n[{DateTime.Now.ToString()}]\n{messageToSend.Item2}:\n\n{messageToSend.Item1}";
+                            if (currentText.Length > 5000)
+                            {
+                                currentText = currentText.Substring(currentText.Length - 5000);
+                            }
+                            silentLogTxt.Text = currentText;
+                        });
+                    } else
+                    {
+                        await discordClient.SendMessageAsync(channel, messageToSend.Item1);
+                    }
                     lastMessageSent = DateTime.Now;
                 }
             }, ct, TaskCreationOptions.LongRunning, TaskScheduler.Default).ContinueWith(_ =>
@@ -240,8 +283,6 @@ namespace JayBot
             return null;
         }
 
-        ConcurrentDictionary<UInt64, BotMessageInfo> currentBotInfo = new ConcurrentDictionary<ulong, BotMessageInfo>();
-        ConcurrentDictionary<UInt64, DateTime?> pickingActive = new ConcurrentDictionary<ulong, DateTime?>();
 
         Mutex logMutex = new Mutex();
         private async Task DiscordClient_MessageCreated(DSharpPlus.EventArgs.MessageCreateEventArgs e)
@@ -315,317 +356,9 @@ namespace JayBot
         }
 
 
-        ConcurrentDictionary<UInt64,ConcurrentBag<DSharpPlus.Entities.DiscordMember>> members = new ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>>();
-
-        private async void scanChannelHistory(UInt64 channelId)
-        {
-            // Scan half a year max
-            DSharpPlus.Entities.DiscordChannel channel = await discordClient.GetChannelAsync(channelId);
-
-            var guild = await discordClient.GetGuildAsync(channel.GuildId.GetValueOrDefault(0));
-            var botUser = await discordClient.GetUserAsync(botId);
-
-            members[channelId] = new ConcurrentBag<DSharpPlus.Entities.DiscordMember>();
-            IReadOnlyCollection<DSharpPlus.Entities.DiscordMember> membersTmp = await guild.GetAllMembersAsync();
-
-            if (membersTmp is null) return;
-
-            StringBuilder membersDebug = new StringBuilder();
-
-            HashSet<UInt64> memberIds = new HashSet<UInt64>();
-            foreach (DSharpPlus.Entities.DiscordMember member in membersTmp)
-            {
-                members[channelId].Add(member);
-                membersDebug.Append($"{member.Id}: DisplayName: {member.DisplayName}, Nickname: {member.Nickname}, Username: {member.Username}\n");
-                memberIds.Add(member.Id);
-                UpdateUser(member);
-            }
-            membersDebug.Append("\n\n");
-
-            foreach (var user in users)
-            {
-                UpdateUserCurrentlyMember(user.Key,channel.Id,memberIds.Contains(user.Key));
-            }
-
-            File.AppendAllText("membersDebug.log", membersDebug.ToString());
-
-            IReadOnlyList<DSharpPlus.Entities.DiscordMessage> messages = await channel.GetMessagesAsync();
-
-            AnalyzeMessages(messages,channel);
-            SaveData();
-
-
-            DSharpPlus.Entities.DiscordMessage newestMessage = messages.Count > 0 ? messages[0] : null;
-            DateTime newestMessageTime = newestMessage.CreationTimestamp.UtcDateTime;
-            DSharpPlus.Entities.DiscordMessage oldestMessage = messages.Count > 0 ? messages[messages.Count - 1] : null;
-
-            while (oldestMessage != null && (DateTime.UtcNow- oldestMessage.CreationTimestamp.UtcDateTime).TotalDays < 180)
-            {
-                lastMessageAnalyzedText.Text = "Message backwards analysis done to: (max 180 days) " + oldestMessage.CreationTimestamp.UtcDateTime.ToString();
-                messages = await channel.GetMessagesBeforeAsync(oldestMessage.Id);
-                AnalyzeMessages(messages, channel);
-                SaveData();
-                oldestMessage = messages.Count > 0 ? messages[messages.Count - 1] : null;
-                if(metaInfo[channel.Id].latestMessageCrawled.HasValue && metaInfo[channel.Id].latestMessageCrawled.Value > oldestMessage.CreationTimestamp.UtcDateTime)
-                {
-                    // This was already crawled
-                    break;
-                }
-            }
-            metaInfo[channel.Id].latestMessageCrawled = newestMessageTime;
-            lastMessageAnalyzedText.Text += " [Finished]";
-
-            SaveData();
-        }
-
-        private void AnalyzeMessages(IReadOnlyList<DSharpPlus.Entities.DiscordMessage> messages, DSharpPlus.Entities.DiscordChannel channel)
-        {
-            if (messages is null) return;
-            foreach (DSharpPlus.Entities.DiscordMessage message in messages)
-            {
-                analyzeMessage(message,channel);
-            }
-        }
-
-        private BotMessageInfo analyzeMessage(DSharpPlus.Entities.DiscordMessage message,DSharpPlus.Entities.DiscordChannel channel)
-        {
-            DateTime thisMessageTime = message.CreationTimestamp.UtcDateTime;
-            UpdateUser(message.Author);
-            if (message.Author.Id == botId)
-            {
-                BotMessageInfo result = analyzeBotMessage(message);
-                if (result is null) return null;
-                if (!channels[channel.Id].Contains(result.queuename)) return null;
-                foreach (var member in result.members)
-                {
-                    UpdateUserJoined(member.Id, channel.Id, thisMessageTime);
-                }
-                return result;
-            } else
-            {
-                UpdateUserWrittenMessage(message.Author.Id, channel.Id, thisMessageTime);
-                if (message.MentionedUsers != null)
-                {
-                    foreach (var user in message.MentionedUsers)
-                    {
-                        UpdateUserMentioned(user.Id, channel.Id, thisMessageTime);
-                    }
-                }
-                return null;
-            }
-            
-        }
-
-        private void AscertainUserActivityExists(Tuple<UInt64, UInt64> userAndChannelId)
-        {
-            if (!userChannelActivity.ContainsKey(userAndChannelId))
-            {
-                userChannelActivity[userAndChannelId] = new UserChannelActivity() { channelId = (Int64)userAndChannelId.Item2, userId = (Int64)userAndChannelId.Item1 };
-            }
-        }
-        //private void UpdateValueIfNeeded(ref DateTime? reference, DateTime when)
-        //{
-        //    if (!reference.HasValue || reference.Value < when)
-        //    {
-        //        reference = when;
-        //    }
-        //}
-        private void UpdateUser(DSharpPlus.Entities.DiscordUser member)
-        {
-            if (!users.ContainsKey(member.Id))
-            {
-                users[member.Id] = new User() { discordId = (Int64)member.Id };
-            }
-            users[member.Id].discordId = (Int64)member.Id;
-            users[member.Id].userName = member.Username;
-        }
-        private void UpdateUser(DSharpPlus.Entities.DiscordMember member)
-        {
-            if (!users.ContainsKey(member.Id))
-            {
-                users[member.Id] = new User() { discordId = (Int64)member.Id };
-            }
-            users[member.Id].discordId = (Int64)member.Id;
-            users[member.Id].displayName = member.DisplayName;
-            users[member.Id].nickName = member.Nickname;
-            users[member.Id].userName = member.Username;
-        }
-        private void UpdateUserIgnore(UInt64 userId, UInt64 channelId, bool ignore)
-        {
-            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
-            AscertainUserActivityExists(tuple);
-            userChannelActivity[tuple].ignoreUser = ignore;
-        }
-        private void UpdateUserCurrentlyMember(UInt64 userId, UInt64 channelId, bool currentlyMember)
-        {
-            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
-            AscertainUserActivityExists(tuple);
-            userChannelActivity[tuple].isCurrentlyMember = currentlyMember;
-        }
-        private void UpdateUserMentioned(UInt64 userId, UInt64 channelId, DateTime when)
-        {
-            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
-            AscertainUserActivityExists(tuple);
-            if (!userChannelActivity[tuple].lastTimeMentioned.HasValue || userChannelActivity[tuple].lastTimeMentioned.Value < when)
-            {
-                userChannelActivity[tuple].lastTimeMentioned = when;
-            }
-        }
-        private void UpdateUserJoined(UInt64 userId, UInt64 channelId, DateTime when)
-        {
-            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
-            AscertainUserActivityExists(tuple);
-            if (!userChannelActivity[tuple].lastTimeJoined.HasValue || userChannelActivity[tuple].lastTimeJoined.Value < when)
-            {
-                userChannelActivity[tuple].lastTimeJoined = when;
-            }
-        }
-        private void UpdateUserReacted(UInt64 userId, UInt64 channelId, DateTime when)
-        {
-            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
-            AscertainUserActivityExists(tuple);
-            if (!userChannelActivity[tuple].lastTimeReacted.HasValue || userChannelActivity[tuple].lastTimeReacted.Value < when)
-            {
-                userChannelActivity[tuple].lastTimeReacted = when;
-            }
-        }
-        private void UpdateUserWrittenMessage(UInt64 userId, UInt64 channelId, DateTime when)
-        {
-            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
-            AscertainUserActivityExists(tuple);
-            if (!userChannelActivity[tuple].lastTimeWrittenMessage.HasValue || userChannelActivity[tuple].lastTimeWrittenMessage.Value < when)
-            {
-                userChannelActivity[tuple].lastTimeWrittenMessage = when;
-            }
-        }
-        private void UpdateUserTyped(UInt64 userId, UInt64 channelId, DateTime when)
-        {
-            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
-            AscertainUserActivityExists(tuple);
-            if (!userChannelActivity[tuple].lastTimeTyped.HasValue || userChannelActivity[tuple].lastTimeTyped.Value < when)
-            {
-                userChannelActivity[tuple].lastTimeTyped = when;
-            }
-        }
-
-        enum QueuePickupIndicator
-        {
-            Unknown,
-            Picking,
-            PickingEnded
-        }
-        class BotMessageInfo {
-            public UInt64[] userIds;
-            public DSharpPlus.Entities.DiscordMember[] members;
-            public string queuename;
-            public int teamPlayerCount1, teamPlayerCount2;
-            public int totalPlayerCount, joinedPlayerCount;
-            public QueuePickupIndicator pickingIndicator = QueuePickupIndicator.Unknown;
-        }
-
-
-        private BotMessageInfo analyzeBotMessage(DSharpPlus.Entities.DiscordMessage msg)
-        {
-            if (!members.ContainsKey(msg.ChannelId))
-            {
-                return null;
-            }
-
-            ConcurrentBag<DSharpPlus.Entities.DiscordMember> membersHere = members[msg.ChannelId];
-
-            Match match = regex.Match(msg.Content);
-
-
-            // Enable buttons
-            int teamPlayerCount1, teamPlayerCount2;
-            int totalPlayerCount, joinedPlayerCount;
-
-            // 1 and 2: (6)v(6)
-            // 3 aand 4: (7)/(12)
-            // 6: [Captures] player names
-
-
-            if (!match.Success)
-            { // Check for pickup /draft stage stuff. We wanna notice picking starting (so we can stop bothering ppl) and picking ending (games reported/canceled)
-                QueuePickupIndicator pickingIndicator = QueuePickupIndicator.PickingEnded;
-                match = regexGameResults.Match(msg.Content);
-                if (!match.Success && msg.Embeds.Count > 0 && msg.Embeds[0].Title != null)
-                {
-                    pickingIndicator = QueuePickupIndicator.Picking;
-                    match = regexDraftStage.Match(msg.Embeds[0].Title);
-
-                }
-                string queueName = null;
-                if (!match.Success)
-                {
-                    match = regexMatchCanceled.Match(msg.Content);
-                    teamPlayerCount1 = teamPlayerCount2 = 6;
-                    totalPlayerCount = teamPlayerCount1 + teamPlayerCount2;
-                    joinedPlayerCount = 0;
-                    queueName = channels[msg.Channel.Id][0];
-                    pickingIndicator = QueuePickupIndicator.PickingEnded;
-                } else
-                {
-                    int.TryParse(match.Groups[2].Value, out teamPlayerCount1);
-                    int.TryParse(match.Groups[3].Value, out teamPlayerCount2);
-                    totalPlayerCount = teamPlayerCount1 + teamPlayerCount2;
-                    joinedPlayerCount = totalPlayerCount;
-                    queueName = match.Groups[1].Value;
-                }
-                return new BotMessageInfo()
-                {
-                    members = new DSharpPlus.Entities.DiscordMember[0],
-                    userIds = new UInt64[0],
-
-                    joinedPlayerCount = joinedPlayerCount,
-                    teamPlayerCount1 = teamPlayerCount1,
-                    teamPlayerCount2 = teamPlayerCount2,
-                    totalPlayerCount = totalPlayerCount,
-                    queuename = queueName,
-                    pickingIndicator = pickingIndicator
-                };
-            }
-
-
-
-            int.TryParse(match.Groups[2].Value, out teamPlayerCount1);
-            int.TryParse(match.Groups[3].Value, out teamPlayerCount2);
-            int.TryParse(match.Groups[5].Value, out totalPlayerCount);
-            int.TryParse(match.Groups[4].Value, out joinedPlayerCount);
-            List<string> players = new List<string>();
-            foreach (var capture in match.Groups[8].Captures)
-            {
-                players.Add(capture.ToString());
-            }
-
-
-            List<UInt64> userIds = new List<ulong>();
-            List<DSharpPlus.Entities.DiscordMember> membersFound = new List<DSharpPlus.Entities.DiscordMember>();
-            foreach (var member in membersHere)
-            {
-                string memberName = nicknameFilterRegex.Replace(member.DisplayName, "");
-                foreach (string player in players)
-                {
-                    if (memberName.Equals(player,StringComparison.InvariantCultureIgnoreCase))
-                    {
-                        userIds.Add(member.Id);
-                        membersFound.Add(member);
-                    }
-                }
-            }
-            return new BotMessageInfo() { members= membersFound.ToArray(), userIds = userIds.ToArray()
-                 , joinedPlayerCount = joinedPlayerCount,
-                  teamPlayerCount1 = teamPlayerCount1,
-                  teamPlayerCount2 = teamPlayerCount2,
-                   totalPlayerCount = totalPlayerCount,
-                   queuename = match.Groups[1].Value
-            };
-        }
 
 
         static readonly string dbPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JayBot", "data.db");
-        ConcurrentDictionary<UInt64,User> users = new ConcurrentDictionary<UInt64, User>();
-        ConcurrentDictionary<Tuple<UInt64,UInt64>,UserChannelActivity> userChannelActivity = new ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity>();
         private void SaveData()
         {
             Directory.CreateDirectory(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JayBot"));
@@ -641,6 +374,8 @@ namespace JayBot
 
                     db.CreateTable<User>();
                     db.CreateTable<UserChannelActivity>();
+                    db.CreateTable<MetaInfo>();
+                    db.CreateTable<CrawledMessage>();
                     db.BeginTransaction();
 
                     foreach(var user in users)
@@ -654,6 +389,10 @@ namespace JayBot
                     foreach(var metaInfoHere in metaInfo)
                     {
                         db.InsertOrReplace(metaInfoHere.Value);
+                    }
+                    foreach (var msg in analyzedMessages)
+                    {
+                        db.InsertOrReplace(msg.Value);
                     }
                     // Save stats.
                     //foreach (ServerInfo serverInfo in data)
@@ -674,7 +413,6 @@ namespace JayBot
             }
         }
 
-        ConcurrentDictionary<UInt64, MetaInfo> metaInfo = new ConcurrentDictionary<ulong, MetaInfo>();
         private void LoadData()
         {
             Directory.CreateDirectory(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JayBot"));
@@ -691,11 +429,17 @@ namespace JayBot
                     db.CreateTable<User>();
                     db.CreateTable<UserChannelActivity>();
                     db.CreateTable<MetaInfo>();
+                    db.CreateTable<CrawledMessage>();
 
                     var userQuery = db.Table<User>();
                     var userActivityQuery = db.Table<UserChannelActivity>();
                     var metaInfoQuery = db.Table<MetaInfo>();
+                    var crawledMessageQuery = db.Table<CrawledMessage>();
 
+                    foreach (CrawledMessage msg in crawledMessageQuery)
+                    {
+                        analyzedMessages[(UInt64)msg.messageId] = msg;
+                    }
                     foreach(User user in userQuery)
                     {
                         users[(UInt64)user.discordId] = user;
@@ -752,9 +496,88 @@ namespace JayBot
         private const double daysSinceJExponent = 1.25;// 1.55;
         private const double daysSinceJFactor = 4.8;
 
+        struct MentionSettings {
+            public bool doMentions;
+            public double EveryoneMinutesDelayMin;
+            public double MentionMessaageMinutesDelayMin;
+            public double HourlyPercentageMin;
+            public double LastTimeJoinedDaysMax;
+            public double LastTimeMentionedMinutesMin;
+            public double LastTimeExpiredFastTrackMax;
+            public double LastTimeWrittenMessageMinutesMin;
+            public double LastTimeWrittenMessageDaysMax;
+            public double LastTimeReactedMinutesMin;
+            public double RandomChanceMentionPercentage;
+        }
+        readonly MentionSettings[] settingsLevels = new MentionSettings[]
+        {
+            new MentionSettings(){ //0-3
+                doMentions = false,
+                EveryoneMinutesDelayMin = 60,
+                MentionMessaageMinutesDelayMin= 5,
+                 HourlyPercentageMin = 1.0,
+                 LastTimeJoinedDaysMax = 1.0,//7.0,
+                 LastTimeMentionedMinutesMin=120.0,
+                 LastTimeExpiredFastTrackMax = 5.0,
+                 LastTimeWrittenMessageMinutesMin = 60.0,
+                 LastTimeWrittenMessageDaysMax = 2.0,
+                 LastTimeReactedMinutesMin = 60.0,
+            },
+            new MentionSettings(){ //4-6
+                doMentions = true,
+                EveryoneMinutesDelayMin = 30,
+                MentionMessaageMinutesDelayMin= 5,
+                 HourlyPercentageMin = 1.0,
+                 LastTimeJoinedDaysMax = 3.0,//7.0,
+                 LastTimeMentionedMinutesMin=120.0,
+                 LastTimeExpiredFastTrackMax = 10.0,
+                 LastTimeWrittenMessageMinutesMin = 30.0,
+                 LastTimeWrittenMessageDaysMax = 5.0,
+                 LastTimeReactedMinutesMin = 30.0,
+            },
+            new MentionSettings(){ //6-8
+                doMentions = true,
+                EveryoneMinutesDelayMin = 15,
+                MentionMessaageMinutesDelayMin= 5,
+                 HourlyPercentageMin = 0.25,
+                 LastTimeJoinedDaysMax = 14.0,//7.0,
+                 LastTimeMentionedMinutesMin=70.0,
+                 LastTimeExpiredFastTrackMax = 20.0,
+                 LastTimeWrittenMessageMinutesMin = 20.0,
+                 LastTimeWrittenMessageDaysMax = 7.0,
+                 LastTimeReactedMinutesMin = 20.0,
+            },
+            new MentionSettings(){ // 9 -11
+                doMentions = true,
+                EveryoneMinutesDelayMin = 5,
+                MentionMessaageMinutesDelayMin= 2,
+                 HourlyPercentageMin = 0.1,
+                 LastTimeJoinedDaysMax = 30.0,//7.0,
+                 LastTimeMentionedMinutesMin=20.0,
+                 LastTimeExpiredFastTrackMax = 30.0,
+                 LastTimeWrittenMessageMinutesMin = 10.0,
+                 LastTimeWrittenMessageDaysMax = 31.0,
+                 LastTimeReactedMinutesMin = 10.0,
+            },
+            new MentionSettings(){ // Last j
+                doMentions = true,
+                EveryoneMinutesDelayMin = 3,
+                MentionMessaageMinutesDelayMin= 2,
+                 HourlyPercentageMin = 0.05,
+                 LastTimeJoinedDaysMax = 120.0,//7.0,
+                 LastTimeMentionedMinutesMin=10.0,
+                 LastTimeExpiredFastTrackMax = 60.0,
+                 LastTimeWrittenMessageMinutesMin = 5.0,
+                 LastTimeWrittenMessageDaysMax = 120.0,
+                 LastTimeReactedMinutesMin = 5.0,
+                 RandomChanceMentionPercentage= 0.3
+            },
+        };
+
+        Random rnd = new Random();
         private async Task MainLoopForChannel(UInt64 channelId)
         {
-
+            if (!MentionsActive) return;
             try
             {
 
@@ -769,98 +592,48 @@ namespace JayBot
                 HashSet<UInt64> prefilteredUsers = new HashSet<ulong>();
 
 
+                bool doMessage = false;
                 bool doEveryone = false;
+
+                
+                MentionSettings mentionSettings;
 
                 if (botInfo.joinedPlayerCount <= botInfo.totalPlayerCount / 4)
                 {
                     // Less than quarter full. 
                     // Just sit still for now, don't spam people
-                    doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 60;
+                    mentionSettings = settingsLevels[0];
                 }
                 else if (botInfo.joinedPlayerCount <= botInfo.totalPlayerCount / 2)
                 {
                     // Less than half full. 
                     // Notify regular players
-                    doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 30;
-                    foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
-                    {
-                        double daysSinceJ = 0;
-                        if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
-                        {
-                            continue;
-                        }
-                        if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
-                        {
-                            continue; // Already in queue
-                        }
-                        if (thisUserChanActivity.Value.ignoreUser)
-                        {
-                            continue; // Leave him alone.
-                        }
-                        if (!thisUserChanActivity.Value.lastTimeJoined.HasValue || (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 7)
-                        {
-                            continue; // Didn't play in the past 7 days, leave him alone
-                        }
-                        daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                        if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(120.0, daysSinceJFactor * Math.Pow(daysSinceJ, daysSinceJExponent)))
-                        {
-                            continue; // Was already mentioned in last 60 minutes, don't bother him.
-                        }
-                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 30)
-                        {
-                            continue; // He was here not too long ago, we don't need to explicitly tell him
-                        }
-                        if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 30)
-                        {
-                            continue; // He was here not too long ago, we don't need to explicitly tell him
-                        }
-                        prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
-                    }
+                    mentionSettings = settingsLevels[1];
                 }
                 else if (botInfo.joinedPlayerCount <= (botInfo.totalPlayerCount * 3 / 4))
                 {
                     // Less than three quarters full
                     // Notify a bit more aggressively
-                    doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 15;
-                    foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
-                    {
-                        double daysSinceJ = 0;
-                        if ((UInt64)thisUserChanActivity.Value.channelId != channelId)
-                        {
-                            continue;
-                        }
-                        if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
-                        {
-                            continue; // Already in queue
-                        }
-                        if (thisUserChanActivity.Value.ignoreUser)
-                        {
-                            continue; // Leave him alone.
-                        }
-                        if (!thisUserChanActivity.Value.lastTimeJoined.HasValue || (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 31)
-                        {
-                            continue; // Didn't play in the past 31 days, leave him alone
-                        }
-                        daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                        if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(70.0, daysSinceJFactor * Math.Pow(daysSinceJ, daysSinceJExponent)))
-                        {
-                            continue; // Was already mentioned in last 30 minutes, don't bother him.
-                        }
-                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 20)
-                        {
-                            continue; // He was here not too long ago, we don't need to explicitly tell him
-                        }
-                        if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 20)
-                        {
-                            continue; // He was here not too long ago, we don't need to explicitly tell him
-                        }
-                        prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
-                    }
+                    mentionSettings = settingsLevels[2];
+
+                }
+                else if (botInfo.joinedPlayerCount <= (botInfo.totalPlayerCount-1))
+                {
+                    // Almost full. Go relatively hard.
+                    mentionSettings = settingsLevels[3];
+
                 }
                 else
                 {
-                    // Almost full. Go hard.
-                    doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > 5;
+                    // One missing! Go really hard.
+                    mentionSettings = settingsLevels[4];
+
+                }
+
+                doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > mentionSettings.EveryoneMinutesDelayMin;
+                doMessage = !metaInfo[channelId].latestMentionMessageSent.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestMentionMessageSent.Value).TotalMinutes > mentionSettings.MentionMessaageMinutesDelayMin;
+                if (mentionSettings.doMentions)
+                {
                     foreach (KeyValuePair<Tuple<ulong, ulong>, UserChannelActivity> thisUserChanActivity in userChannelActivity)
                     {
                         double daysSinceJ = 0;
@@ -876,26 +649,56 @@ namespace JayBot
                         {
                             continue; // Leave him alone.
                         }
-                        if (!thisUserChanActivity.Value.lastTimeJoined.HasValue || (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > 90)
+                        if(mentionSettings.RandomChanceMentionPercentage > 0.0)
+                        {
+                            double rndVal;
+                            lock (rnd)
+                            {
+                                rndVal = rnd.NextDouble();
+                            }
+                            rndVal *= 100.0;
+                            if(rndVal < mentionSettings.RandomChanceMentionPercentage)
+                            {
+                                prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
+                                continue;
+                            }
+                        }
+                        if (thisUserChanActivity.Value.getNormalizedHourlyJPercentage(DateTime.UtcNow.Hour) < mentionSettings.HourlyPercentageMin)
+                        {
+                            continue; // This is not a common time for this player to join
+                        }
+                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > mentionSettings.LastTimeWrittenMessageDaysMax)
+                        {
+                            continue; // Didn't write for quite some time
+                        }
+                        if (!thisUserChanActivity.Value.lastTimeJoined.HasValue || (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays > mentionSettings.LastTimeJoinedDaysMax)
                         {
                             continue; // Didn't play in the past 90 days, leave him alone
                         }
                         daysSinceJ = (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays;
-                        if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < Math.Max(40.0, daysSinceJFactor * Math.Pow(daysSinceJ, daysSinceJExponent)))
+                        double lastTimeMentionedMin = Math.Max(mentionSettings.LastTimeMentionedMinutesMin, daysSinceJFactor * Math.Pow(daysSinceJ, daysSinceJExponent));
+                        if (thisUserChanActivity.Value.lastTimeExpired.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeExpired.Value).TotalMinutes < mentionSettings.LastTimeExpiredFastTrackMax)
+                        {
+                            // Fast-track if recently expired
+                            lastTimeMentionedMin = 10;
+                        }
+                        if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < lastTimeMentionedMin)
                         {
                             continue; // Was already mentioned in last 15 minutes, don't bother him.
                         }
-                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < 10)
+                        if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalMinutes < mentionSettings.LastTimeWrittenMessageMinutesMin)
                         {
                             continue; // He was here not too long ago, we don't need to explicitly tell him
                         }
-                        if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < 10)
+                        if (thisUserChanActivity.Value.lastTimeReacted.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeReacted.Value).TotalMinutes < mentionSettings.LastTimeReactedMinutesMin)
                         {
                             continue; // He was here not too long ago, we don't need to explicitly tell him
                         }
                         prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
                     }
                 }
+                    
+                
 
                 // Now check which of the prefiltered users are members still.
                 DSharpPlus.Entities.DiscordChannel channel = await discordClient.GetChannelAsync(channelId);
@@ -931,10 +734,11 @@ namespace JayBot
                         message.Append($"<@{user}> ");
                     }
                 }
-                if (usersWhoAreStillInTheDiscord.Count > 0)
+                if (usersWhoAreStillInTheDiscord.Count > 0 && doMessage)
                 {
 
                     enqueueMessage(message.ToString(), channel.Id);
+                    metaInfo[channelId].latestMentionMessageSent = DateTime.UtcNow;
                 }
 
                 message.Clear();
@@ -981,6 +785,7 @@ namespace JayBot
             if (string.IsNullOrWhiteSpace(msg)) return;
             enqueueMessage(msg,channelId.Value);
         }
+
     }
 
 }
