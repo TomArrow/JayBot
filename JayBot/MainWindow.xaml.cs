@@ -66,6 +66,7 @@ namespace JayBot
         ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity> userChannelActivity = new ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity>();
         ConcurrentDictionary<UInt64, MetaInfo> metaInfo = new ConcurrentDictionary<ulong, MetaInfo>();
         ConcurrentDictionary<UInt64, BotMessageInfo> currentBotInfo = new ConcurrentDictionary<ulong, BotMessageInfo>();
+        ConcurrentDictionary<UInt64, DateTime?> lastPlayerCountIncreaseWithoutEveryoneMention = new ConcurrentDictionary<ulong, DateTime?>();
         ConcurrentDictionary<UInt64, DateTime?> pickingActive = new ConcurrentDictionary<ulong, DateTime?>();
         ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>> members = new ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>>();
         ConcurrentDictionary<UInt64, CrawledMessage> analyzedMessages = new ConcurrentDictionary<ulong, CrawledMessage>();
@@ -167,7 +168,7 @@ namespace JayBot
         }
 
         Queue<Tuple<string,UInt64>> messagesToSend = new Queue<Tuple<string, UInt64>>();
-        DateTime lastMessageSent = DateTime.Now;
+        DateTime lastMessageSent = DateTime.UtcNow;
         int millisecondTimeout = 5000;
         int millisecondBuffer = 2000;
         private void enqueueMessage(string message, UInt64 channelId)
@@ -185,7 +186,7 @@ namespace JayBot
                 while (true)
                 {
                     Thread.Sleep(50); // Kinda dumb solution but too lazy to do a proper promise thingie whatever things thangs
-                    if ((DateTime.Now - lastMessageSent).TotalMilliseconds < millisecondBuffer + millisecondTimeout) continue; // Shouldn't even be necessary but just to be safe.
+                    if ((DateTime.UtcNow - lastMessageSent).TotalMilliseconds < millisecondBuffer + millisecondTimeout) continue; // Shouldn't even be necessary but just to be safe.
                     //if (channelId == null) continue;
                     Tuple<string, ulong> messageToSend = null;
                     lock (messagesToSend)
@@ -211,7 +212,7 @@ namespace JayBot
                     {
                         await discordClient.SendMessageAsync(channel, messageToSend.Item1);
                     }
-                    lastMessageSent = DateTime.Now;
+                    lastMessageSent = DateTime.UtcNow;
                 }
             }, ct, TaskCreationOptions.LongRunning, TaskScheduler.Default).ContinueWith(_ =>
             {
@@ -345,6 +346,17 @@ namespace JayBot
         {
             if (botInfo != null)
             {
+                if (currentBotInfo.ContainsKey(channelId))
+                {
+                    if(currentBotInfo[channelId].utcTime > botInfo.utcTime)
+                    {
+                        return; // older message
+                    }
+                    if(currentBotInfo[channelId].joinedPlayerCount < botInfo.joinedPlayerCount)
+                    {
+                        lastPlayerCountIncreaseWithoutEveryoneMention[channelId] = DateTime.UtcNow;
+                    }   
+                }
                 currentBotInfo[channelId] = botInfo;
                 if (botInfo.pickingIndicator == QueuePickupIndicator.Picking)
                 {
@@ -450,14 +462,17 @@ namespace JayBot
 
                     foreach (CrawledMessage msg in crawledMessageQuery)
                     {
+                        ObjectDateTimeNormalizer.AllDateTimesToUTC(msg);
                         analyzedMessages[(UInt64)msg.messageId] = msg;
                     }
                     foreach(User user in userQuery)
                     {
+                        ObjectDateTimeNormalizer.AllDateTimesToUTC(user);
                         users[(UInt64)user.discordId] = user;
                     }
                     foreach(UserChannelActivity userActivity in userActivityQuery)
                     {
+                        ObjectDateTimeNormalizer.AllDateTimesToUTC(userActivity);
                         var tuple = new Tuple<UInt64,UInt64>((UInt64)userActivity.userId, (UInt64)userActivity.channelId);
                         userChannelActivity[tuple] = userActivity;
                     }
@@ -484,6 +499,7 @@ namespace JayBot
                     }
                     foreach (MetaInfo meta in metaInfoQuery)
                     {
+                        ObjectDateTimeNormalizer.AllDateTimesToUTC(meta);
                         metaInfo[(UInt64)meta.channelId] = meta;
                     }
 
@@ -644,7 +660,7 @@ namespace JayBot
 
 
                 DateTime? lastGameOver = metaInfo[channelId].lastGameOver;
-                doEveryone = !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > mentionSettings.EveryoneMinutesDelayMin;
+                doEveryone = (lastPlayerCountIncreaseWithoutEveryoneMention.ContainsKey(channelId) && lastPlayerCountIncreaseWithoutEveryoneMention[channelId].HasValue) || !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > mentionSettings.EveryoneMinutesDelayMin;
                 doMessage = !metaInfo[channelId].latestMentionMessageSent.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestMentionMessageSent.Value).TotalMinutes > mentionSettings.MentionMessaageMinutesDelayMin;
                 //if (mentionSettings.doMentions)
                 {
@@ -805,6 +821,7 @@ namespace JayBot
                     {
                         enqueueMessage($"@everyone {playerDelta}", channel.Id);
                     }
+                    lastPlayerCountIncreaseWithoutEveryoneMention[channelId] = null;
                 }
 
                 SaveData();
