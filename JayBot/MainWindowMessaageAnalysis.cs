@@ -158,6 +158,13 @@ namespace JayBot
                         }
                     }
                 }
+                if (message.MentionEveryone)
+                {
+                    if (!metaInfo[channel.Id].latestEveryoneMention.HasValue || metaInfo[channel.Id].latestEveryoneMention < thisMessageTime)
+                    {
+                        metaInfo[channel.Id].latestEveryoneMention = thisMessageTime;
+                    }
+                }
                 UpdateUserWrittenMessage(message.Author.Id, channel.Id, thisMessageTime);
                 if (message.MentionedUsers != null)
                 {
@@ -242,6 +249,15 @@ namespace JayBot
             if (!userChannelActivity[tuple].lastTimeActiveJoinReminded.HasValue || userChannelActivity[tuple].lastTimeActiveJoinReminded.Value < when)
             {
                 userChannelActivity[tuple].lastTimeActiveJoinReminded = when;
+            }
+        }
+        private void UpdateUserRemindedOfJoinSoft(UInt64 userId, UInt64 channelId, DateTime when)
+        {
+            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
+            AscertainUserActivityExists(tuple);
+            if (!userChannelActivity[tuple].lastTimeActiveJoinRemindedSoft.HasValue || userChannelActivity[tuple].lastTimeActiveJoinRemindedSoft.Value < when)
+            {
+                userChannelActivity[tuple].lastTimeActiveJoinRemindedSoft = when;
             }
         }
         private void UpdateUserExpired(UInt64 userId, UInt64 channelId, DateTime when)

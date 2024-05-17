@@ -16,6 +16,7 @@ namespace JayBot.SQLMappings
         public Int64 channelId { get; set; }
         public DateTime? lastTimeJoined { get; set; } = null;
         public DateTime? lastTimeActiveJoinReminded { get; set; } = null;
+        public DateTime? lastTimeActiveJoinRemindedSoft { get; set; } = null;
         public DateTime? lastTimeWrittenMessage { get; set; } = null;
         public DateTime? lastTimeTyped { get; set; } = null;
         public DateTime? lastTimeReacted { get; set; } = null;
