@@ -590,9 +590,9 @@ namespace JayBot
         readonly MentionSettings[] settingsLevels = new MentionSettings[]
         {
             new MentionSettings(){ //0-3
-                ActiveJoinReminderDelayMinutes = 10*60,
+                ActiveJoinReminderDelayMinutes = 9*60,
                 ActiveJoinReminderRepeatDelayMinutes = 60,
-                //ActiveJoinAfkRemovalDelayMinutes = 12*60,
+                ActiveJoinAfkRemovalDelayMinutes = 12*60,
                 doMentions = false,
                 doEveryone = false,
                 EveryoneMinutesDelayMin = 60,
@@ -607,9 +607,9 @@ namespace JayBot
                  LastTimeTypedMinutesMin = 30.0,
             },
             new MentionSettings(){ //4-6
-                ActiveJoinReminderDelayMinutes = 4*60,
+                ActiveJoinReminderDelayMinutes = 170,
                 ActiveJoinReminderRepeatDelayMinutes = 45,
-                ActiveJoinAfkRemovalDelayMinutes = 5.5*60,
+                ActiveJoinAfkRemovalDelayMinutes = 10*60,
                 doMentions = true,
                 doEveryone = true,
                 EveryoneMinutesDelayMin = 30,
@@ -625,8 +625,8 @@ namespace JayBot
             },
             new MentionSettings(){ //6-8
                 ActiveJoinReminderDelayMinutes = 120,
-                ActiveJoinReminderRepeatDelayMinutes = 25,
-                ActiveJoinAfkRemovalDelayMinutes = 150,
+                ActiveJoinReminderRepeatDelayMinutes = 10,
+                ActiveJoinAfkRemovalDelayMinutes = 180,
                 doMentions = true,
                 doEveryone = true,
                 EveryoneMinutesDelayMin = 15,
@@ -641,9 +641,9 @@ namespace JayBot
                  LastTimeTypedMinutesMin = 10.0,
             },
             new MentionSettings(){ // 9 -11
-                ActiveJoinReminderDelayMinutes = 60,
+                ActiveJoinReminderDelayMinutes = 80,
                 ActiveJoinReminderRepeatDelayMinutes = 5,
-                ActiveJoinAfkRemovalDelayMinutes = 70,
+                ActiveJoinAfkRemovalDelayMinutes = 125,
                 doMentions = true,
                 doEveryone = true,
                 EveryoneMinutesDelayMin = 5,
@@ -658,9 +658,9 @@ namespace JayBot
                  LastTimeTypedMinutesMin = 5.0,
             },
             new MentionSettings(){ // Last j
-                ActiveJoinReminderDelayMinutes = 45,
-                ActiveJoinReminderRepeatDelayMinutes = 2,
-                ActiveJoinAfkRemovalDelayMinutes = 50,
+                ActiveJoinReminderDelayMinutes = 60,
+                ActiveJoinReminderRepeatDelayMinutes = 4,
+                ActiveJoinAfkRemovalDelayMinutes = 90,
                 doMentions = true,
                 doEveryone = true,
                 EveryoneMinutesDelayMin = 3,
@@ -703,6 +703,7 @@ namespace JayBot
                 HashSet<UInt64> prefilteredUsers = new HashSet<ulong>();
                 HashSet<UInt64> prefilteredUsersToRemind = new HashSet<ulong>();
                 Dictionary<UInt64, RemindType> remindUsersType = new Dictionary<ulong, RemindType>();
+                Dictionary<UInt64, double> afkTimes = new Dictionary<ulong, double>();
 
                 bool doMessage = false;
                 bool doEveryone = false;
@@ -779,7 +780,23 @@ namespace JayBot
                                 {
                                     prefilteredUsersToRemind.Add((UInt64)thisUserChanActivity.Value.userId);
                                     bool removeUser = minuteSinceActive > mentionSettings.ActiveJoinAfkRemovalDelayMinutes;
+                                    if (removeUser)
+                                    {
+
+                                        if (!thisUserChanActivity.Value.lastTimeActiveJoinReminded.HasValue)
+                                        {
+                                            removeUser = false;
+                                        } else 
+                                        {
+                                            // Dont remove user if he wasn't reminded yet.
+                                            if (thisUserChanActivity.Value.lastTimeActiveJoinReminded <= (DateTime.UtcNow - new TimeSpan(0, 0, (int)(minuteSinceActive*60.0))))
+                                            {
+                                                removeUser = false;
+                                            }
+                                        }
+                                    }
                                     remindUsersType[(UInt64)thisUserChanActivity.Value.userId] = removeUser ? RemindType.Remove : RemindType.Remind;
+                                    afkTimes[(UInt64)thisUserChanActivity.Value.userId] = minuteSinceActive;
                                 }
                             }
                             continue; 
@@ -944,7 +961,7 @@ namespace JayBot
                     messageRemove.Append("Testing, would remove: ");
                 } else
                 {
-                    messageRemove.Append($"remove, afk: ");
+                    messageRemove.Append($"maybe remove, afk: ");
                 }
                 foreach (var user in usersWhoAreStillInTheDiscordRemind)
                 {
@@ -963,12 +980,12 @@ namespace JayBot
                         if (memberDetails.ContainsKey(user))
                         {
 
-                            stringToAppend.Append($"{memberDetails[user].DisplayName} ");
+                            stringToAppend.Append($"{memberDetails[user].DisplayName} *({(int)afkTimes[user]} mins afk)* ");
                         }
                     }
                     else
                     {
-                        stringToAppend.Append($"<@{user}> ");
+                        stringToAppend.Append($"<@{user}> *({(int)afkTimes[user]} mins afk)* ");
                     }
                 }
                 message.Append($"still here?");
