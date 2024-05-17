@@ -716,13 +716,13 @@ namespace JayBot
                     // Just sit still for now, don't spam people
                     mentionSettings = settingsLevels[0];
                 }
-                else if (botInfo.joinedPlayerCount <= botInfo.totalPlayerCount / 2)
+                else if (botInfo.joinedPlayerCount < botInfo.totalPlayerCount / 2)
                 {
                     // Less than half full. 
                     // Notify regular players
                     mentionSettings = settingsLevels[1];
                 }
-                else if (botInfo.joinedPlayerCount <= (botInfo.totalPlayerCount * 3 / 4))
+                else if (botInfo.joinedPlayerCount < (botInfo.totalPlayerCount * 3 / 4))
                 {
                     // Less than three quarters full
                     // Notify a bit more aggressively
