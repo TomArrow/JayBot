@@ -46,6 +46,7 @@ namespace JayBot
             public int totalPlayerCount, joinedPlayerCount;
             public QueuePickupIndicator pickingIndicator = QueuePickupIndicator.Unknown;
             public bool messageSeenBefore = false;
+            public bool containsPlayersList = false;
         }
 
         private DiscordClient discordClient = null;
@@ -67,14 +68,15 @@ namespace JayBot
         ConcurrentDictionary<UInt64, MetaInfo> metaInfo = new ConcurrentDictionary<ulong, MetaInfo>();
         ConcurrentDictionary<UInt64, BotMessageInfo> currentBotInfo = new ConcurrentDictionary<ulong, BotMessageInfo>();
         ConcurrentDictionary<UInt64, DateTime?> lastPlayerCountIncreaseWithoutEveryoneMention = new ConcurrentDictionary<ulong, DateTime?>();
+        ConcurrentDictionary<UInt64, DateTime> lastPlayerCountIncrease = new ConcurrentDictionary<ulong, DateTime>();
         ConcurrentDictionary<UInt64, int> messagesSinceLastWho = new ConcurrentDictionary<ulong, int>();
         ConcurrentDictionary<UInt64, DateTime?> pickingActive = new ConcurrentDictionary<ulong, DateTime?>();
         ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>> members = new ConcurrentDictionary<UInt64, ConcurrentBag<DSharpPlus.Entities.DiscordMember>>();
         ConcurrentDictionary<UInt64, CrawledMessage> analyzedMessages = new ConcurrentDictionary<ulong, CrawledMessage>();
 
-        public bool TestMode { get; set; } = true;
-        public bool MentionsActive { get; set; } = true;
-        public bool SilentMode { get; set; } = true;
+        public bool TestMode { get; set; } = false;
+        public bool MentionsActive { get; set; } = false;
+        public bool SilentMode { get; set; } = false;
 
         public MainWindow()
         {
@@ -118,14 +120,20 @@ namespace JayBot
             //test();
             startMessageRunner();
             start();
+            scanPastAndStartLoop();
+        }
+
+        private async void scanPastAndStartLoop()
+        {
+
             foreach (var channel in channels)
             {
-                scanChannelHistory(channel.Key);
+                await scanChannelHistory(channel.Key);
             }
             // Do second time quick because that might have taken a while and not gotten all
             foreach (var channel in channels)
             {
-                scanChannelHistory(channel.Key);
+                await scanChannelHistory(channel.Key);
             }
             startMainLoop();
         }
@@ -281,9 +289,16 @@ namespace JayBot
                 });
             };
             discordClient.MessageReactionAdded += DiscordClient_MessageReactionAdded;
+            discordClient.TypingStarted += DiscordClient_TypingStarted;
 
             discordClient.ConnectAsync();
 
+        }
+
+        private Task DiscordClient_TypingStarted(DiscordClient sender, DSharpPlus.EventArgs.TypingStartEventArgs args)
+        {
+            UpdateUserTyped(args.User.Id,args.Channel.Id,args.StartedAt.UtcDateTime);
+            return null;
         }
 
         private Task DiscordClient_MessageReactionAdded(DiscordClient sender, DSharpPlus.EventArgs.MessageReactionAddEventArgs args)
@@ -317,7 +332,7 @@ namespace JayBot
                 return;
             }
 
-            BotMessageInfo botInfo = analyzeMessage(e.Message, channel);
+            BotMessageInfo botInfo = await analyzeMessage(e.Message, channel);
 
             if ((botInfo != null && botInfo.userIds != null && botInfo.userIds.Length > 0)|| (e.Message.Content?.Trim().ToLowerInvariant().Equals("=who",StringComparison.InvariantCultureIgnoreCase)).GetValueOrDefault(false))
             {
@@ -357,11 +372,11 @@ namespace JayBot
             }                    //await e.Message.RespondAsync("pong!");
         }
 
-        private void scanHistoryBtn_Click(object sender, RoutedEventArgs e)
+        private async Task scanHistoryBtn_Click(object sender, RoutedEventArgs e)
         {
             foreach(var kvp in channels)
             {
-                scanChannelHistory(kvp.Key);
+                await scanChannelHistory(kvp.Key);
             }
         }
 
@@ -379,13 +394,13 @@ namespace JayBot
                     if(currentBotInfo[channelId].joinedPlayerCount < botInfo.joinedPlayerCount)
                     {
                         playerCountIncreased = true;
-                        lastPlayerCountIncreaseWithoutEveryoneMention[channelId] = DateTime.UtcNow;
                     }   
                 }
                 currentBotInfo[channelId] = botInfo;
                 if (playerCountIncreased)
                 {
                     lastPlayerCountIncreaseWithoutEveryoneMention[channelId] = DateTime.UtcNow;
+                    lastPlayerCountIncrease[channelId] = DateTime.UtcNow;
                 }
                 if (botInfo.pickingIndicator == QueuePickupIndicator.Picking)
                 {
@@ -553,7 +568,10 @@ namespace JayBot
         private const double daysSinceJExponent = 1.25;// 1.55;
         private const double daysSinceJFactor = 4.8;
 
-        struct MentionSettings {
+        struct MentionSettings
+        {
+            public double ActiveJoinReminderDelayMinutes; // for when ppl are afk
+            public double ActiveJoinReminderRepeatDelayMinutes; // for when ppl are afk
             public bool doMentions;
             public double EveryoneMinutesDelayMin;
             public double MentionMessaageMinutesDelayMin;
@@ -564,11 +582,14 @@ namespace JayBot
             public double LastTimeWrittenMessageMinutesMin;
             public double LastTimeWrittenMessageDaysMax;
             public double LastTimeReactedMinutesMin;
+            public double LastTimeTypedMinutesMin;
             public double RandomChanceMentionPercentage;
         }
         readonly MentionSettings[] settingsLevels = new MentionSettings[]
         {
             new MentionSettings(){ //0-3
+                ActiveJoinReminderDelayMinutes = 10*60,
+                ActiveJoinReminderRepeatDelayMinutes = 60,
                 doMentions = false,
                 EveryoneMinutesDelayMin = 60,
                 MentionMessaageMinutesDelayMin= 5,
@@ -579,8 +600,11 @@ namespace JayBot
                  LastTimeWrittenMessageMinutesMin = 60.0,
                  LastTimeWrittenMessageDaysMax = 2.0,
                  LastTimeReactedMinutesMin = 60.0,
+                 LastTimeTypedMinutesMin = 30.0,
             },
             new MentionSettings(){ //4-6
+                ActiveJoinReminderDelayMinutes = 4*60,
+                ActiveJoinReminderRepeatDelayMinutes = 45,
                 doMentions = true,
                 EveryoneMinutesDelayMin = 30,
                 MentionMessaageMinutesDelayMin= 5,
@@ -591,8 +615,11 @@ namespace JayBot
                  LastTimeWrittenMessageMinutesMin = 30.0,
                  LastTimeWrittenMessageDaysMax = 5.0,
                  LastTimeReactedMinutesMin = 30.0,
+                 LastTimeTypedMinutesMin = 15.0,
             },
             new MentionSettings(){ //6-8
+                ActiveJoinReminderDelayMinutes = 120,
+                ActiveJoinReminderRepeatDelayMinutes = 25,
                 doMentions = true,
                 EveryoneMinutesDelayMin = 15,
                 MentionMessaageMinutesDelayMin= 5,
@@ -603,8 +630,11 @@ namespace JayBot
                  LastTimeWrittenMessageMinutesMin = 20.0,
                  LastTimeWrittenMessageDaysMax = 7.0,
                  LastTimeReactedMinutesMin = 20.0,
+                 LastTimeTypedMinutesMin = 10.0,
             },
             new MentionSettings(){ // 9 -11
+                ActiveJoinReminderDelayMinutes = 60,
+                ActiveJoinReminderRepeatDelayMinutes = 5,
                 doMentions = true,
                 EveryoneMinutesDelayMin = 5,
                 MentionMessaageMinutesDelayMin= 2,
@@ -615,8 +645,11 @@ namespace JayBot
                  LastTimeWrittenMessageMinutesMin = 10.0,
                  LastTimeWrittenMessageDaysMax = 31.0,
                  LastTimeReactedMinutesMin = 10.0,
+                 LastTimeTypedMinutesMin = 5.0,
             },
             new MentionSettings(){ // Last j
+                ActiveJoinReminderDelayMinutes = 45,
+                ActiveJoinReminderRepeatDelayMinutes = 2,
                 doMentions = true,
                 EveryoneMinutesDelayMin = 3,
                 MentionMessaageMinutesDelayMin= 2,
@@ -627,6 +660,7 @@ namespace JayBot
                  LastTimeWrittenMessageMinutesMin = 5.0,
                  LastTimeWrittenMessageDaysMax = 120.0,
                  LastTimeReactedMinutesMin = 5.0,
+                 LastTimeTypedMinutesMin = 2.5,
                  RandomChanceMentionPercentage= 0.3
             },
         };
@@ -646,7 +680,10 @@ namespace JayBot
 
                 if (pickingActive.ContainsKey(channelId) && pickingActive[channelId].HasValue) return; // don't do anything if pickup is active.
 
+                if (lastPlayerCountIncrease.ContainsKey(channelId) && (DateTime.UtcNow- lastPlayerCountIncrease[channelId]).TotalMinutes > 60) return; // Last j was over an hour ago. Fair to say its dead
+
                 HashSet<UInt64> prefilteredUsers = new HashSet<ulong>();
+                HashSet<UInt64> prefilteredUsersToRemind = new HashSet<ulong>();
 
 
                 bool doMessage = false;
@@ -702,7 +739,29 @@ namespace JayBot
                         }
                         if (botInfo.userIds.Contains((UInt64)thisUserChanActivity.Value.userId))
                         {
-                            continue; // Already in queue
+                            // Already in queue
+                            // Check if he has been afk for some time...
+                            DateTime? lastActivity = null;
+                            if(thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (!lastActivity.HasValue || thisUserChanActivity.Value.lastTimeWrittenMessage > lastActivity.Value))
+                            {
+                                lastActivity = thisUserChanActivity.Value.lastTimeWrittenMessage;
+                            }
+                            if(thisUserChanActivity.Value.lastTimeReacted.HasValue && (!lastActivity.HasValue || thisUserChanActivity.Value.lastTimeReacted > lastActivity.Value))
+                            {
+                                lastActivity = thisUserChanActivity.Value.lastTimeReacted;
+                            }
+                            if(thisUserChanActivity.Value.lastTimeTyped.HasValue && (!lastActivity.HasValue || thisUserChanActivity.Value.lastTimeTyped > lastActivity.Value))
+                            {
+                                lastActivity = thisUserChanActivity.Value.lastTimeTyped;
+                            }
+                            if(lastActivity.HasValue && (DateTime.UtcNow- lastActivity.Value).TotalMinutes > mentionSettings.ActiveJoinReminderDelayMinutes )
+                            {
+                                if (!thisUserChanActivity.Value.lastTimeActiveJoinReminded.HasValue || (DateTime.UtcNow- thisUserChanActivity.Value.lastTimeActiveJoinReminded.Value).TotalMinutes > mentionSettings.ActiveJoinReminderRepeatDelayMinutes)
+                                {
+                                    prefilteredUsersToRemind.Add((UInt64)thisUserChanActivity.Value.userId);
+                                }
+                            }
+                            continue; 
                         }
                         if (thisUserChanActivity.Value.ignoreUser)
                         {
@@ -785,6 +844,17 @@ namespace JayBot
                                 continue; // He was here not too long ago, we don't need to explicitly tell him
                             }
                         }
+                        if (thisUserChanActivity.Value.lastTimeTyped.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeTyped.Value).TotalMinutes < mentionSettings.LastTimeTypedMinutesMin)
+                        {
+                            if (lastGameOver.HasValue && lastGameOver > thisUserChanActivity.Value.lastTimeTyped && thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays < 1.0)
+                            {
+                                // Continue anyway. He was here recently yes, but a game ended since then.
+                            }
+                            else
+                            {
+                                continue; // He was here not too long ago, we don't need to explicitly tell him
+                            }
+                        }
                         prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
                     }
                 }
@@ -800,6 +870,7 @@ namespace JayBot
                 var guild = channel.Guild;
                 var members = await guild.GetAllMembersAsync();
                 HashSet<UInt64> usersWhoAreStillInTheDiscord = new HashSet<ulong>();
+                HashSet<UInt64> usersWhoAreStillInTheDiscordRemind = new HashSet<ulong>();
                 Dictionary<UInt64, DiscordMember> memberDetails = new Dictionary<ulong, DiscordMember>();
                 foreach (var member in members)
                 {
@@ -807,6 +878,11 @@ namespace JayBot
                     {
                         memberDetails[member.Id] = member;
                         usersWhoAreStillInTheDiscord.Add(member.Id);
+                    }
+                    if (prefilteredUsersToRemind.Contains(member.Id))
+                    {
+                        memberDetails[member.Id] = member;
+                        usersWhoAreStillInTheDiscordRemind.Add(member.Id);
                     }
                 }
                 StringBuilder message = new StringBuilder();
@@ -834,6 +910,34 @@ namespace JayBot
 
                     enqueueMessage(message.ToString(), channel.Id);
                     metaInfo[channelId].latestMentionMessageSent = DateTime.UtcNow;
+                    anyMsgSent = true;
+                }
+
+                message.Clear();
+                if (TestMode)
+                {
+                    message.Append("Testing, would remind: ");
+                }
+                foreach (var user in usersWhoAreStillInTheDiscordRemind)
+                {
+                    UpdateUserRemindedOfJoin(user, channel.Id, DateTime.UtcNow);
+                    if (TestMode)
+                    {
+                        if (memberDetails.ContainsKey(user))
+                        {
+                            message.Append($"{memberDetails[user].DisplayName} ");
+                        }
+                    }
+                    else
+                    {
+                        message.Append($"<@{user}> ");
+                    }
+                }
+                message.Append($"still here?");
+                if (usersWhoAreStillInTheDiscordRemind.Count > 0/* && doMessage*/)
+                {
+
+                    enqueueMessage(message.ToString(), channel.Id);
                     anyMsgSent = true;
                 }
 

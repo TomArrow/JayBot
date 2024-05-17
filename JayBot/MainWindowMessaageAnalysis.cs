@@ -27,7 +27,7 @@ namespace JayBot
     public partial class MainWindow : Window
     {
 
-        private async void scanChannelHistory(UInt64 channelId)
+        private async Task scanChannelHistory(UInt64 channelId)
         {
             // Scan half a year max
             DSharpPlus.Entities.DiscordChannel channel = await discordClient.GetChannelAsync(channelId);
@@ -61,9 +61,9 @@ namespace JayBot
 
             IReadOnlyList<DSharpPlus.Entities.DiscordMessage> messages = await channel.GetMessagesAsync();
 
-            BotMessageInfo newestBotInfo = null;
+            BotMessageInfoContainer newestBotInfo = new BotMessageInfoContainer();
 
-            AnalyzeMessages(messages, channel, ref newestBotInfo);
+            await AnalyzeMessages(messages, channel, newestBotInfo);
             SaveData();
 
 
@@ -76,7 +76,7 @@ namespace JayBot
                 lastMessageAnalyzedText.Text = "Message backwards analysis done to: (max 600 days) " + oldestMessage.CreationTimestamp.UtcDateTime.ToString();
                 messages = await channel.GetMessagesBeforeAsync(oldestMessage.Id);
                 if (messages.Count == 0) break;
-                AnalyzeMessages(messages, channel, ref newestBotInfo);
+                await AnalyzeMessages(messages, channel, newestBotInfo);
                 SaveData();
                 oldestMessage = messages.Count > 0 ? messages[messages.Count - 1] : null;
                 if (metaInfo[channel.Id].latestMessageCrawled.HasValue && metaInfo[channel.Id].latestMessageCrawled.Value > oldestMessage.CreationTimestamp.UtcDateTime)
@@ -88,25 +88,30 @@ namespace JayBot
             metaInfo[channel.Id].latestMessageCrawled = newestMessageTime;
             lastMessageAnalyzedText.Text += " [Finished]";
 
-            ProcessLatestBotMessage(newestBotInfo, channel.Id);
+            ProcessLatestBotMessage(newestBotInfo.botInfo, channel.Id);
 
             SaveData();
         }
 
-        private void AnalyzeMessages(IReadOnlyList<DSharpPlus.Entities.DiscordMessage> messages, DSharpPlus.Entities.DiscordChannel channel, ref BotMessageInfo newestBotInfo)
+        class BotMessageInfoContainer
+        {
+            public BotMessageInfo botInfo = null;
+        }
+
+        private async Task AnalyzeMessages(IReadOnlyList<DSharpPlus.Entities.DiscordMessage> messages, DSharpPlus.Entities.DiscordChannel channel, BotMessageInfoContainer newestBotInfo)
         {
             if (messages is null) return;
             foreach (DSharpPlus.Entities.DiscordMessage message in messages)
             {
-                BotMessageInfo botInfo = analyzeMessage(message, channel);
-                if(newestBotInfo is null)
+                BotMessageInfo botInfo = await analyzeMessage(message, channel);
+                if(newestBotInfo.botInfo is null)
                 {
-                    newestBotInfo = botInfo;
+                    newestBotInfo.botInfo = botInfo;
                 }
             }
         }
 
-        private BotMessageInfo analyzeMessage(DSharpPlus.Entities.DiscordMessage message, DSharpPlus.Entities.DiscordChannel channel)
+        private async Task<BotMessageInfo> analyzeMessage(DSharpPlus.Entities.DiscordMessage message, DSharpPlus.Entities.DiscordChannel channel)
         {
             DateTime thisMessageTime = message.CreationTimestamp.UtcDateTime;
             UpdateUser(message.Author);
@@ -119,6 +124,13 @@ namespace JayBot
                     if (!metaInfo[channel.Id].lastGameOver.HasValue || metaInfo[channel.Id].lastGameOver < thisMessageTime)
                     {
                         metaInfo[channel.Id].lastGameOver = thisMessageTime;
+                    }
+                }
+                if (result.containsPlayersList)
+                {
+                    if (!metaInfo[channel.Id].lastBotMessageWithPlayersParsed.HasValue || metaInfo[channel.Id].lastBotMessageWithPlayersParsed < thisMessageTime)
+                    {
+                        metaInfo[channel.Id].lastBotMessageWithPlayersParsed = thisMessageTime;
                     }
                 }
                 if (!channels[channel.Id].Contains(result.queuename)) return null;
@@ -134,6 +146,18 @@ namespace JayBot
             }
             else
             {
+                if(message.Reactions != null && message.Reactions.Count > 0)
+                {
+                    // TODO skip this? could it be too slow? idk
+                    foreach (var reaction in message.Reactions)
+                    {
+                        IReadOnlyList<DiscordUser> thisemojireactions = await message.GetReactionsAsync(reaction.Emoji);
+                        foreach(var emojiReaction in thisemojireactions)
+                        {
+                            UpdateUserReacted(emojiReaction.Id,channel.Id,thisMessageTime);
+                        }
+                    }
+                }
                 UpdateUserWrittenMessage(message.Author.Id, channel.Id, thisMessageTime);
                 if (message.MentionedUsers != null)
                 {
@@ -209,6 +233,15 @@ namespace JayBot
             if (!userChannelActivity[tuple].lastTimeJoined.HasValue || userChannelActivity[tuple].lastTimeJoined.Value < when)
             {
                 userChannelActivity[tuple].lastTimeJoined = when;
+            }
+        }
+        private void UpdateUserRemindedOfJoin(UInt64 userId, UInt64 channelId, DateTime when)
+        {
+            var tuple = new Tuple<UInt64, UInt64>(userId, channelId);
+            AscertainUserActivityExists(tuple);
+            if (!userChannelActivity[tuple].lastTimeActiveJoinReminded.HasValue || userChannelActivity[tuple].lastTimeActiveJoinReminded.Value < when)
+            {
+                userChannelActivity[tuple].lastTimeActiveJoinReminded = when;
             }
         }
         private void UpdateUserExpired(UInt64 userId, UInt64 channelId, DateTime when)
@@ -299,6 +332,7 @@ namespace JayBot
 
                 }
                 string queueName = null;
+                bool playerCountKnown = false;
                 if (!match.Success)
                 {
                     match = regexMatchCanceled.Match(msg.Content);
@@ -311,17 +345,28 @@ namespace JayBot
                         pickingIndicator = QueuePickupIndicator.PickingEnded;
                     } else
                     {
-                        match= playerExpiredRegex.Match(msg.Content);
-                        if (match.Success)
+                        if(msg.Content.Trim().Equals("> no players",StringComparison.InvariantCultureIgnoreCase))
                         {
-                            UInt64 expiredPlayer;
-                            if (UInt64.TryParse(match.Groups[1].Value,out expiredPlayer))
+                            teamPlayerCount1 = teamPlayerCount2 = 6;
+                            totalPlayerCount = teamPlayerCount1 + teamPlayerCount2;
+                            joinedPlayerCount = 0;
+                            queueName = channels[msg.Channel.Id][0];
+                            pickingIndicator = QueuePickupIndicator.Unknown;
+                            playerCountKnown = true;
+                        } else
+                        {
+                            match = playerExpiredRegex.Match(msg.Content);
+                            if (match.Success)
                             {
-                                UpdateUserExpired(msg.Id,msg.ChannelId,msg.CreationTimestamp.UtcDateTime);
+                                UInt64 expiredPlayer;
+                                if (UInt64.TryParse(match.Groups[1].Value, out expiredPlayer))
+                                {
+                                    UpdateUserExpired(msg.Id, msg.ChannelId, msg.CreationTimestamp.UtcDateTime);
+                                }
+
                             }
-                            
+                            return null;
                         }
-                        return null;
                     }
                 }
                 else
@@ -344,7 +389,8 @@ namespace JayBot
                     totalPlayerCount = totalPlayerCount,
                     queuename = queueName,
                     pickingIndicator = pickingIndicator,
-                    messageSeenBefore = messageSeenBefore
+                    messageSeenBefore = messageSeenBefore,
+                    containsPlayersList = playerCountKnown
                 };
             }
 
@@ -388,7 +434,8 @@ namespace JayBot
                 teamPlayerCount2 = teamPlayerCount2,
                 totalPlayerCount = totalPlayerCount,
                 queuename = match.Groups[1].Value,
-                messageSeenBefore = messageSeenBefore
+                messageSeenBefore = messageSeenBefore,
+                containsPlayersList = true
             };
         }
     }

@@ -15,5 +15,6 @@ namespace JayBot.SQLMappings
         public DateTime? latestMentionMessageSent { get; set; }
         public DateTime? latestEveryoneMention { get; set; }
         public DateTime? lastGameOver { get; set; }
+        public DateTime? lastBotMessageWithPlayersParsed { get; set; }
     }
 }
