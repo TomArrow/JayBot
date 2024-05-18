@@ -178,7 +178,7 @@ namespace JayBot
 
         Queue<Tuple<string,UInt64>> messagesToSend = new Queue<Tuple<string, UInt64>>();
         DateTime lastMessageSent = DateTime.UtcNow;
-        int millisecondTimeout = 5000;
+        int millisecondTimeout = 500;
         int millisecondBuffer = 2000;
         private void enqueueMessage(string message, UInt64 channelId)
         {
@@ -625,7 +625,7 @@ namespace JayBot
             },
             new MentionSettings(){ //6-8
                 ActiveJoinReminderDelayMinutes = 120,
-                ActiveJoinReminderRepeatDelayMinutes = 10,
+                ActiveJoinReminderRepeatDelayMinutes = 30,
                 ActiveJoinAfkRemovalDelayMinutes = 180,
                 doMentions = true,
                 doEveryone = true,
@@ -641,8 +641,8 @@ namespace JayBot
                  LastTimeTypedMinutesMin = 10.0,
             },
             new MentionSettings(){ // 9 -11
-                ActiveJoinReminderDelayMinutes = 80,
-                ActiveJoinReminderRepeatDelayMinutes = 5,
+                ActiveJoinReminderDelayMinutes = 100,
+                ActiveJoinReminderRepeatDelayMinutes = 10,
                 ActiveJoinAfkRemovalDelayMinutes = 125,
                 doMentions = true,
                 doEveryone = true,
@@ -658,9 +658,9 @@ namespace JayBot
                  LastTimeTypedMinutesMin = 5.0,
             },
             new MentionSettings(){ // Last j
-                ActiveJoinReminderDelayMinutes = 60,
-                ActiveJoinReminderRepeatDelayMinutes = 4,
-                ActiveJoinAfkRemovalDelayMinutes = 90,
+                ActiveJoinReminderDelayMinutes = 80,
+                ActiveJoinReminderRepeatDelayMinutes = 5,
+                ActiveJoinAfkRemovalDelayMinutes = 110,
                 doMentions = true,
                 doEveryone = true,
                 EveryoneMinutesDelayMin = 8,
@@ -745,7 +745,9 @@ namespace JayBot
 
 
                 DateTime? lastGameOver = metaInfo[channelId].lastGameOver;
-                doEveryone = (lastPlayerCountIncreaseWithoutEveryoneMention.ContainsKey(channelId) && lastPlayerCountIncreaseWithoutEveryoneMention[channelId].HasValue) || !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > mentionSettings.EveryoneMinutesDelayMin;
+                doEveryone = (lastPlayerCountIncreaseWithoutEveryoneMention.ContainsKey(channelId) && lastPlayerCountIncreaseWithoutEveryoneMention[channelId].HasValue && (
+                        !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalSeconds > 15
+                    )) || !metaInfo[channelId].latestEveryoneMention.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestEveryoneMention.Value).TotalMinutes > mentionSettings.EveryoneMinutesDelayMin;
                 doMessage = !metaInfo[channelId].latestMentionMessageSent.HasValue || (DateTime.UtcNow - metaInfo[channelId].latestMentionMessageSent.Value).TotalMinutes > mentionSettings.MentionMessaageMinutesDelayMin;
                 //if (mentionSettings.doMentions)
                 {
