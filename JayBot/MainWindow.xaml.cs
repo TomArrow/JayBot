@@ -47,6 +47,8 @@ namespace JayBot
             public QueuePickupIndicator pickingIndicator = QueuePickupIndicator.Unknown;
             public bool messageSeenBefore = false;
             public bool containsPlayersList = false;
+            public bool isGameStarted = false;
+            public Int64? gameId;
         }
 
         private DiscordClient discordClient = null;
@@ -57,6 +59,9 @@ namespace JayBot
 
         Regex regex = new Regex(@">\s*\*\*((\d+)v(\d+)[^*]*)\*\*\s*\(\s*(\d+)\s*\/\s*(\d+)\)\s*\|\s*((`([^`]+)`\/?)+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex regexDraftStage = new Regex(@"\*\*((\d+)v(\d+)[^*]*)\*\*\s*is now on the draft stage!", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        Regex regexGameStarted = new Regex(@"\*\*((\d+)v(\d+)[^*]*)\*\*\s*has started!", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        Regex regexGameStartedPlayerList = new Regex(@"<@!?\s*(\d+)\s*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        Regex regexGameStartedMatchId = new Regex(@"Match id: (\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex regexGameResults = new Regex(@"```markdown(?:\\n|\n)((\d+)v(\d+)[^\(]*)\([^\)]*\)\s*results", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex regexMatchCanceled = new Regex(@"your match has been canceled.\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex nicknameFilterRegex = new Regex(@"([`<>\*_\\\[\]\~])|((?=\s)[^ ])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -65,6 +70,7 @@ namespace JayBot
         ConcurrentDictionary<UInt64, string[]> channels = new ConcurrentDictionary<ulong, string[]>();
         ConcurrentDictionary<UInt64, User> users = new ConcurrentDictionary<UInt64, User>();
         ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity> userChannelActivity = new ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity>();
+        ConcurrentDictionary<Tuple<UInt64, UInt64, Int64>, HashSet<Int64>> userChannelDayGames = new ConcurrentDictionary<Tuple<UInt64, UInt64, Int64>, HashSet<Int64>>();
         ConcurrentDictionary<UInt64, MetaInfo> metaInfo = new ConcurrentDictionary<ulong, MetaInfo>();
         ConcurrentDictionary<UInt64, BotMessageInfo> currentBotInfo = new ConcurrentDictionary<ulong, BotMessageInfo>();
         ConcurrentDictionary<UInt64, DateTime?> lastPlayerCountIncreaseWithoutEveryoneMention = new ConcurrentDictionary<ulong, DateTime?>();
@@ -442,6 +448,7 @@ namespace JayBot
 
                     db.CreateTable<User>();
                     db.CreateTable<UserChannelActivity>();
+                    db.CreateTable<UserChannelDayGames>();
                     db.CreateTable<MetaInfo>();
                     db.CreateTable<CrawledMessage>();
                     db.BeginTransaction();
@@ -454,7 +461,19 @@ namespace JayBot
                     {
                         db.InsertOrReplace(userActivity.Value);
                     }
-                    foreach(var metaInfoHere in metaInfo)
+                    foreach (var games in userChannelDayGames)
+                    {
+                        foreach(var game in games.Value)
+                        {
+                            db.InsertOrReplace(new UserChannelDayGames() { 
+                                userId = (Int64)games.Key.Item1,
+                                channelId = (Int64)games.Key.Item2,
+                                DayIndex = games.Key.Item3,
+                                GameId = game,
+                            });
+                        }
+                    }
+                    foreach (var metaInfoHere in metaInfo)
                     {
                         db.InsertOrReplace(metaInfoHere.Value);
                     }
@@ -496,11 +515,13 @@ namespace JayBot
 
                     db.CreateTable<User>();
                     db.CreateTable<UserChannelActivity>();
+                    db.CreateTable<UserChannelDayGames>();
                     db.CreateTable<MetaInfo>();
                     db.CreateTable<CrawledMessage>();
 
                     var userQuery = db.Table<User>();
                     var userActivityQuery = db.Table<UserChannelActivity>();
+                    var userDayGamesQuery = db.Table<UserChannelDayGames>();
                     var metaInfoQuery = db.Table<MetaInfo>();
                     var crawledMessageQuery = db.Table<CrawledMessage>();
 
@@ -519,6 +540,13 @@ namespace JayBot
                         ObjectDateTimeNormalizer.AllDateTimesToUTC(userActivity);
                         var tuple = new Tuple<UInt64,UInt64>((UInt64)userActivity.userId, (UInt64)userActivity.channelId);
                         userChannelActivity[tuple] = userActivity;
+                    }
+                    foreach(UserChannelDayGames userDayGame in userDayGamesQuery)
+                    {
+                        ObjectDateTimeNormalizer.AllDateTimesToUTC(userDayGame);
+                        var tuple = new Tuple<UInt64,UInt64,Int64>((UInt64)userDayGame.userId, (UInt64)userDayGame.channelId, userDayGame.DayIndex);
+                        AscertainUserChannelDayGameExists(tuple);
+                        userChannelDayGames[tuple].Add(userDayGame.GameId);
                     }
 
                     HashSet<UInt64> channelMetaIds = new HashSet<ulong>();
@@ -586,6 +614,8 @@ namespace JayBot
             public double LastTimeReactedMinutesMin;
             public double LastTimeTypedMinutesMin;
             public double RandomChanceMentionPercentage;
+            public int MinGamesPlayedInLastXDays_DayCount = 7;
+            public int MinGamesPlayedInLastXDays_GameCount = 2;
         }
         readonly MentionSettings[] settingsLevels = new MentionSettings[]
         {
@@ -605,6 +635,8 @@ namespace JayBot
                  LastTimeWrittenMessageDaysMax = 2.0,
                  LastTimeReactedMinutesMin = 60.0,
                  LastTimeTypedMinutesMin = 30.0,
+                 MinGamesPlayedInLastXDays_DayCount = 8,
+                 MinGamesPlayedInLastXDays_GameCount = 3
             },
             new MentionSettings(){ //4-6
                 ActiveJoinReminderDelayMinutes = 170,
@@ -622,6 +654,8 @@ namespace JayBot
                  LastTimeWrittenMessageDaysMax = 5.0,
                  LastTimeReactedMinutesMin = 30.0,
                  LastTimeTypedMinutesMin = 15.0,
+                 MinGamesPlayedInLastXDays_DayCount = 8,
+                 MinGamesPlayedInLastXDays_GameCount = 3
             },
             new MentionSettings(){ //6-8
                 ActiveJoinReminderDelayMinutes = 120,
@@ -639,6 +673,8 @@ namespace JayBot
                  LastTimeWrittenMessageDaysMax = 7.0,
                  LastTimeReactedMinutesMin = 20.0,
                  LastTimeTypedMinutesMin = 10.0,
+                 MinGamesPlayedInLastXDays_DayCount = 15,
+                 MinGamesPlayedInLastXDays_GameCount = 2
             },
             new MentionSettings(){ // 9 -11
                 ActiveJoinReminderDelayMinutes = 100,
@@ -656,6 +692,8 @@ namespace JayBot
                  LastTimeWrittenMessageDaysMax = 31.0,
                  LastTimeReactedMinutesMin = 10.0,
                  LastTimeTypedMinutesMin = 5.0,
+                 MinGamesPlayedInLastXDays_DayCount = 61,
+                 MinGamesPlayedInLastXDays_GameCount = 1
             },
             new MentionSettings(){ // Last j
                 ActiveJoinReminderDelayMinutes = 80,
@@ -673,7 +711,9 @@ namespace JayBot
                  LastTimeWrittenMessageDaysMax = 120.0,
                  LastTimeReactedMinutesMin = 5.0,
                  LastTimeTypedMinutesMin = 2.5,
-                 RandomChanceMentionPercentage= 0.3
+                 RandomChanceMentionPercentage= 0.3,
+                 MinGamesPlayedInLastXDays_DayCount = 361,
+                 MinGamesPlayedInLastXDays_GameCount = 1
             },
         };
 
@@ -701,6 +741,7 @@ namespace JayBot
                 if (lastPlayerCountIncrease.ContainsKey(channelId) && (DateTime.UtcNow- lastPlayerCountIncrease[channelId]).TotalMinutes > 60) return; // Last j was over an hour ago. Fair to say its dead
 
                 HashSet<UInt64> prefilteredUsers = new HashSet<ulong>();
+                HashSet<UInt64> potentialPlayersForEveryoneConsideration = new HashSet<ulong>();
                 HashSet<UInt64> prefilteredUsersToRemind = new HashSet<ulong>();
                 Dictionary<UInt64, RemindType> remindUsersType = new Dictionary<ulong, RemindType>();
                 Dictionary<UInt64, double> afkTimes = new Dictionary<ulong, double>();
@@ -708,8 +749,11 @@ namespace JayBot
                 bool doMessage = false;
                 bool doEveryone = false;
 
+
                 
                 MentionSettings mentionSettings;
+
+                int neededPlayerCount = botInfo.totalPlayerCount - botInfo.joinedPlayerCount;
 
                 if (botInfo.joinedPlayerCount <= botInfo.totalPlayerCount / 4)
                 {
@@ -802,7 +846,13 @@ namespace JayBot
                                     afkTimes[(UInt64)thisUserChanActivity.Value.userId] = minuteSinceActive;
                                 }
                             }
-                            continue; 
+                            continue;
+                        }
+                        double hourlyRatio = thisUserChanActivity.Value.getNormalizedHourlyJRatio(DateTime.UtcNow.Hour);
+                        if(hourlyRatio > 0.1)
+                        {
+
+                            potentialPlayersForEveryoneConsideration.Add((UInt64)thisUserChanActivity.Value.userId);
                         }
                         if (thisUserChanActivity.Value.ignoreUser)
                         {
@@ -822,7 +872,6 @@ namespace JayBot
                                 continue;
                             }
                         }
-                        double hourlyRatio = thisUserChanActivity.Value.getNormalizedHourlyJRatio(DateTime.UtcNow.Hour);
                         if (hourlyRatio < mentionSettings.HourlyRatioMin)
                         {
                             if(hourlyRatio > 0)
@@ -837,7 +886,7 @@ namespace JayBot
                                 }
                             }
                             continue; // This is not a common time for this player to join
-                        }
+                        } 
                         if (thisUserChanActivity.Value.lastTimeWrittenMessage.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeWrittenMessage.Value).TotalDays > mentionSettings.LastTimeWrittenMessageDaysMax)
                         {
                             continue; // Didn't write for quite some time
@@ -853,6 +902,8 @@ namespace JayBot
                             // Fast-track if recently expired
                             lastTimeMentionedMin = 10;
                         }
+
+                        potentialPlayersForEveryoneConsideration.Add((UInt64)thisUserChanActivity.Value.userId);
                         if (thisUserChanActivity.Value.lastTimeMentioned.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeMentioned.Value).TotalMinutes < lastTimeMentionedMin)
                         {
                             if (lastGameOver.HasValue && lastGameOver > thisUserChanActivity.Value.lastTimeMentioned && thisUserChanActivity.Value.lastTimeJoined.HasValue && (DateTime.UtcNow - thisUserChanActivity.Value.lastTimeJoined.Value).TotalDays < 1.0)
@@ -896,12 +947,24 @@ namespace JayBot
                                 continue; // He was here not too long ago, we don't need to explicitly tell him
                             }
                         }
+                        if (GetUserPlayedGamesInLastXDaysFrom((UInt64)thisUserChanActivity.Value.userId,channelId,DateTime.UtcNow,mentionSettings.MinGamesPlayedInLastXDays_DayCount).Length < mentionSettings.MinGamesPlayedInLastXDays_GameCount)
+                        {
+                            // Hasn't played enough games in the specified time range.
+                            continue;
+                        }
                         prefilteredUsers.Add((UInt64)thisUserChanActivity.Value.userId);
                     }
                 }
                 if (!mentionSettings.doMentions && !TestMode)
                 {
                     prefilteredUsers.Clear();
+                }
+
+                int potentialPlayersAvailable = potentialPlayersForEveryoneConsideration.Count;
+
+                if(potentialPlayersAvailable < neededPlayerCount)
+                {
+                    doEveryone = false;
                 }
 
                 bool anyMsgSent = false;

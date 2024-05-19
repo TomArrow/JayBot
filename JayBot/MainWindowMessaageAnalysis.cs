@@ -142,13 +142,20 @@ namespace JayBot
                         UpdateUserJoinedActivity(member.Id, channel.Id, thisMessageTime);
                     }
                 }
+                if (result.isGameStarted && result.gameId.HasValue)
+                {
+                    foreach (var user in result.userIds)
+                    {
+                        UpdateUserPlayedGame(user,channel.Id,result.gameId.Value, thisMessageTime);
+                    }
+                }
                 return result;
             }
             else
             {
-                if(message.Reactions != null && message.Reactions.Count > 0)
+                if(message.Reactions != null && message.Reactions.Count > 0 && (DateTime.UtcNow-message.CreationTimestamp.UtcDateTime).TotalDays < 1.0)
                 {
-                    // TODO skip this? could it be too slow? idk
+                    // only doing this one day into the past. too slow.
                     foreach (var reaction in message.Reactions)
                     {
                         IReadOnlyList<DiscordUser> thisemojireactions = await message.GetReactionsAsync(reaction.Emoji);
@@ -183,6 +190,13 @@ namespace JayBot
             if (!userChannelActivity.ContainsKey(userAndChannelId))
             {
                 userChannelActivity[userAndChannelId] = new UserChannelActivity() { channelId = (Int64)userAndChannelId.Item2, userId = (Int64)userAndChannelId.Item1 };
+            }
+        }
+        private void AscertainUserChannelDayGameExists(Tuple<UInt64, UInt64,Int64> userAndChannelIdAndDay)
+        {
+            if (!userChannelDayGames.ContainsKey(userAndChannelIdAndDay))
+            {
+                userChannelDayGames[userAndChannelIdAndDay] = new HashSet<Int64>();
             }
         }
         //private void UpdateValueIfNeeded(ref DateTime? reference, DateTime when)
@@ -308,6 +322,45 @@ namespace JayBot
                 userChannelActivity[tuple].lastTimeTyped = when;
             }
         }
+        const int secondsPerDay = 60*60*24;
+        private Int64 UtcTimeToDayIndex(DateTime when)
+        {
+            return ((DateTimeOffset)when).ToUnixTimeSeconds()/ secondsPerDay;
+        }
+        private void UpdateUserPlayedGame(UInt64 userId, UInt64 channelId, Int64 gameId, DateTime when)
+        {
+            Int64 day = UtcTimeToDayIndex(when);
+            var tuple = new Tuple<UInt64, UInt64,Int64>(userId, channelId, day);
+            AscertainUserChannelDayGameExists(tuple);
+            userChannelDayGames[tuple].Add(gameId);
+        }
+        private Int64[] GetUserPlayedGames(UInt64 userId, UInt64 channelId, DateTime when)
+        {
+            Int64 day = UtcTimeToDayIndex(when);
+            return GetUserPlayedGames(userId,channelId,day);
+        }
+        private Int64[] GetUserPlayedGames(UInt64 userId, UInt64 channelId, Int64 day)
+        {
+            var tuple = new Tuple<UInt64, UInt64,Int64>(userId, channelId, day);
+            if (userChannelDayGames.ContainsKey(tuple))
+            {
+                return userChannelDayGames[tuple].ToArray();
+            } else
+            {
+                return new long[0];
+            }
+        }
+        private Int64[] GetUserPlayedGamesInLastXDaysFrom(UInt64 userId, UInt64 channelId, DateTime when, int days)
+        {
+            Int64 day = UtcTimeToDayIndex(when);
+            List<Int64> games = new List<long>();
+            for(int i=0; i< days; i++)
+            {
+                games.AddRange(GetUserPlayedGames(userId, channelId, day));
+                day--;
+            }
+            return games.ToArray();
+        }
 
 
 
@@ -341,14 +394,25 @@ namespace JayBot
             { // Check for pickup /draft stage stuff. We wanna notice picking starting (so we can stop bothering ppl) and picking ending (games reported/canceled)
                 QueuePickupIndicator pickingIndicator = QueuePickupIndicator.PickingEnded;
                 match = regexGameResults.Match(msg.Content);
+                bool triedGameStartedRegex = false;
+                bool hasEmbeds = false;
                 if (!match.Success && msg.Embeds.Count > 0 && msg.Embeds[0].Title != null)
                 {
+                    hasEmbeds = true;
                     pickingIndicator = QueuePickupIndicator.Picking;
                     match = regexDraftStage.Match(msg.Embeds[0].Title);
 
+                    if (!match.Success)
+                    {
+                        match = regexGameStarted.Match(msg.Embeds[0].Title);
+                        triedGameStartedRegex = true;
+                    }
                 }
+                List<UInt64> userIdsHere = new List<ulong>();
                 string queueName = null;
                 bool playerCountKnown = false;
+                bool isGameStarted = false;
+                Int64? gameId = null;
                 if (!match.Success)
                 {
                     match = regexMatchCanceled.Match(msg.Content);
@@ -387,17 +451,58 @@ namespace JayBot
                 }
                 else
                 {
+                    if (hasEmbeds && msg.Embeds[0].Footer != null && msg.Embeds[0].Footer.Text != null)
+                    {
+                        Match matchIdMatch = regexGameStartedMatchId.Match(msg.Embeds[0].Footer.Text);
+                        if (matchIdMatch.Success)
+                        {
+                            string matchIdString = matchIdMatch.Groups[1].Value;
+                            Int64 matchIdHere;
+                            if (Int64.TryParse(matchIdString, out matchIdHere))
+                            {
+                                gameId = matchIdHere;
+                            }
+                        }
+                    }
+
                     int.TryParse(match.Groups[2].Value, out teamPlayerCount1);
                     int.TryParse(match.Groups[3].Value, out teamPlayerCount2);
-                    totalPlayerCount = teamPlayerCount1 + teamPlayerCount2;
-                    joinedPlayerCount = totalPlayerCount;
+                    if (triedGameStartedRegex)
+                    {
+                        if(msg.Embeds[0].Fields != null)
+                        {
+                            foreach (DiscordEmbedField field in msg.Embeds[0].Fields)
+                            {
+                                if (field.Value is null) continue;
+                                MatchCollection userMatches = regexGameStartedPlayerList.Matches(field.Value);
+                                foreach(Match userMatch in userMatches)
+                                {
+                                    if (!userMatch.Success) continue;
+                                    string userIdString = userMatch.Groups[1].Value;
+                                    UInt64 userIdHere;
+                                    if(UInt64.TryParse(userIdString,out userIdHere))
+                                    {
+                                        userIdsHere.Add(userIdHere);
+                                    }
+                                }
+                            }
+                        }
+                        isGameStarted = true;
+                        totalPlayerCount = userIdsHere.Count;
+                        joinedPlayerCount = userIdsHere.Count;
+                    } else
+                    {
+
+                        totalPlayerCount = teamPlayerCount1 + teamPlayerCount2;
+                        joinedPlayerCount = totalPlayerCount;
+                    }
                     queueName = match.Groups[1].Value;
                 }
                 return new BotMessageInfo()
                 {
                     utcTime = msg.CreationTimestamp.UtcDateTime,
                     members = new DSharpPlus.Entities.DiscordMember[0],
-                    userIds = new UInt64[0],
+                    userIds = userIdsHere.ToArray(),
 
                     joinedPlayerCount = joinedPlayerCount,
                     teamPlayerCount1 = teamPlayerCount1,
@@ -406,7 +511,9 @@ namespace JayBot
                     queuename = queueName,
                     pickingIndicator = pickingIndicator,
                     messageSeenBefore = messageSeenBefore,
-                    containsPlayersList = playerCountKnown
+                    containsPlayersList = playerCountKnown,
+                    isGameStarted = isGameStarted,
+                    gameId = gameId
                 };
             }
 
