@@ -84,6 +84,10 @@ namespace JayBot
         public bool MentionsActive { get; set; } = false;
         public bool SilentMode { get; set; } = false;
 
+        System.Media.SoundPlayer soundPlayer = null;
+
+        int queuePoppedNotifySoundPlayed = 0;
+
         public MainWindow()
         {
             SQLitePCL.Batteries_V2.Init();
@@ -93,7 +97,7 @@ namespace JayBot
 
             try
             {
-                //soundPlayer = new System.Media.SoundPlayer(@"C:\Windows\Media\Windows Notify Calendar.wav");
+                soundPlayer = new System.Media.SoundPlayer(@"C:\Windows\Media\Windows Notify Calendar.wav");
 
             }
             catch (Exception ex)
@@ -410,21 +414,28 @@ namespace JayBot
                 }
                 if (botInfo.pickingIndicator == QueuePickupIndicator.Picking)
                 {
+                    if (soundPlayer != null && queuePoppedNotifySoundPlayed < 5)
+                    {
+                        soundPlayer.Play();
+                        queuePoppedNotifySoundPlayed++;
+                    }
                     pickingActive[channelId] = botInfo.utcTime;
                 }
                 else if (botInfo.pickingIndicator == QueuePickupIndicator.PickingEnded)
                 {
                     pickingActive[channelId] = null;
+                    queuePoppedNotifySoundPlayed = 0;
                 }
                 else if (botInfo.pickingIndicator == QueuePickupIndicator.Unknown)
                 {
                     if (pickingActive.ContainsKey(channelId))
                     {
                         DateTime? lastPicking = pickingActive[channelId];
-                        if (lastPicking.HasValue && (botInfo.utcTime - lastPicking.Value).TotalMinutes > 60)
+                        if (lastPicking.HasValue && (botInfo.utcTime - lastPicking.Value).TotalMinutes > 180)
                         {
                             // Reset after 1 hour in case something glitches. dumb solution but whatever.
                             pickingActive[channelId] = null;
+                            queuePoppedNotifySoundPlayed = 0;
                         }
                     }
                 }
@@ -603,6 +614,7 @@ namespace JayBot
             public double ActiveJoinAfkRemovalDelayMinutes = double.PositiveInfinity; // for when ppl are afk
             public bool doEveryone;
             public bool doMentions;
+            public int regularWhoDistance;
             public double EveryoneMinutesDelayMin;
             public double MentionMessaageMinutesDelayMin;
             public double HourlyRatioMin;
@@ -636,7 +648,8 @@ namespace JayBot
                  LastTimeReactedMinutesMin = 60.0,
                  LastTimeTypedMinutesMin = 30.0,
                  MinGamesPlayedInLastXDays_DayCount = 8,
-                 MinGamesPlayedInLastXDays_GameCount = 3
+                 MinGamesPlayedInLastXDays_GameCount = 3,
+                 regularWhoDistance = 30
             },
             new MentionSettings(){ //4-6
                 ActiveJoinReminderDelayMinutes = 170,
@@ -655,7 +668,8 @@ namespace JayBot
                  LastTimeReactedMinutesMin = 30.0,
                  LastTimeTypedMinutesMin = 15.0,
                  MinGamesPlayedInLastXDays_DayCount = 8,
-                 MinGamesPlayedInLastXDays_GameCount = 3
+                 MinGamesPlayedInLastXDays_GameCount = 3,
+                 regularWhoDistance = 25
             },
             new MentionSettings(){ //6-8
                 ActiveJoinReminderDelayMinutes = 120,
@@ -674,7 +688,8 @@ namespace JayBot
                  LastTimeReactedMinutesMin = 20.0,
                  LastTimeTypedMinutesMin = 10.0,
                  MinGamesPlayedInLastXDays_DayCount = 15,
-                 MinGamesPlayedInLastXDays_GameCount = 2
+                 MinGamesPlayedInLastXDays_GameCount = 2,
+                 regularWhoDistance = 20
             },
             new MentionSettings(){ // 9 -11
                 ActiveJoinReminderDelayMinutes = 100,
@@ -693,7 +708,8 @@ namespace JayBot
                  LastTimeReactedMinutesMin = 10.0,
                  LastTimeTypedMinutesMin = 5.0,
                  MinGamesPlayedInLastXDays_DayCount = 61,
-                 MinGamesPlayedInLastXDays_GameCount = 1
+                 MinGamesPlayedInLastXDays_GameCount = 1,
+                 regularWhoDistance = 15
             },
             new MentionSettings(){ // Last j
                 ActiveJoinReminderDelayMinutes = 80,
@@ -713,7 +729,8 @@ namespace JayBot
                  LastTimeTypedMinutesMin = 2.5,
                  RandomChanceMentionPercentage= 0.3,
                  MinGamesPlayedInLastXDays_DayCount = 361,
-                 MinGamesPlayedInLastXDays_GameCount = 1
+                 MinGamesPlayedInLastXDays_GameCount = 1,
+                 regularWhoDistance = 8
             },
         };
 
@@ -774,7 +791,7 @@ namespace JayBot
                     mentionSettings = settingsLevels[2];
 
                 }
-                else if (botInfo.joinedPlayerCount <= (botInfo.totalPlayerCount-1))
+                else if (botInfo.joinedPlayerCount < (botInfo.totalPlayerCount-1))
                 {
                     // Almost full. Go relatively hard.
                     mentionSettings = settingsLevels[3];
@@ -1091,7 +1108,7 @@ namespace JayBot
                 {
                     messagesSinceLastWho[channel.Id] = 0;
                 }
-                if (anyMsgSent && messagesSinceLastWho[channel.Id]>=8)
+                if (anyMsgSent && messagesSinceLastWho[channel.Id]>=8 || messagesSinceLastWho[channel.Id] >= mentionSettings.regularWhoDistance)
                 {
                     enqueueMessage("=who", channel.Id);
                     messagesSinceLastWho[channel.Id] = 0;
@@ -1111,6 +1128,16 @@ namespace JayBot
             foreach (UInt64 key in keys)
             {
                 pickingActive[key] = null;
+                queuePoppedNotifySoundPlayed = 0;
+            }
+        }
+        private void resetPickingToPickingBtn_Click(object sender, RoutedEventArgs e)
+        {
+            UInt64[] keys = pickingActive.Keys.ToArray();
+            foreach (UInt64 key in keys)
+            {
+                pickingActive[key] = DateTime.UtcNow;
+                queuePoppedNotifySoundPlayed = 999;
             }
         }
 

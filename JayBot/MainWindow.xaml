@@ -18,6 +18,7 @@
                 <CheckBox IsChecked="{Binding SilentMode,Mode=TwoWay}">SilentMode</CheckBox>
             </WrapPanel>
             <!--<Button x:Name="scanHistoryBtn" Click="scanHistoryBtn_Click" IsEnabled="False">Scan history</Button>-->
+            <Button x:Name="resetPickingToPickingBtn" Click="resetPickingToPickingBtn_Click">Picking (reset if glitch)</Button>
             <Button x:Name="resetPickingBtn" Click="resetPickingBtn_Click">Not Picking (reset if glitch)</Button>
             <TextBox x:Name="lastMessageAnalyzedText"></TextBox>
             <GroupBox Header="Manual message sending">
