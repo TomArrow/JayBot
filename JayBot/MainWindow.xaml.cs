@@ -65,6 +65,7 @@ namespace JayBot
         Regex regexGameResults = new Regex(@"```markdown(?:\\n|\n)((\d+)v(\d+)[^\(]*)\([^\)]*\)\s*results", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex regexMatchCanceled = new Regex(@"your match has been canceled.\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex nicknameFilterRegex = new Regex(@"([`<>\*_\\\[\]\~])|((?=\s)[^ ])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        Regex ratingPrefixRegex = new Regex(@"^\[\d+\] (.+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex playerExpiredRegex = new Regex(@"<@\s*(\d+)> were removed from all queues \(expire time ran off\)\.", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
         ConcurrentDictionary<UInt64, string[]> channels = new ConcurrentDictionary<ulong, string[]>();
@@ -1114,7 +1115,7 @@ namespace JayBot
                     messagesSinceLastWho[channel.Id] = 0;
                 }
 
-                SaveData();
+                //SaveData();
             }catch(Exception e)
             {
                 Debug.WriteLine(e.ToString());

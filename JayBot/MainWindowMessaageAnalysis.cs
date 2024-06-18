@@ -534,7 +534,13 @@ namespace JayBot
             List<DSharpPlus.Entities.DiscordMember> membersFound = new List<DSharpPlus.Entities.DiscordMember>();
             foreach (var member in membersHere)
             {
-                string memberName = nicknameFilterRegex.Replace(member.DisplayName, "");
+                string memberName = member.DisplayName;
+                Match ratingMatch;
+                if ((ratingMatch = ratingPrefixRegex.Match(memberName)).Success)
+                {
+                    memberName = ratingMatch.Groups[1].Value;
+                }
+                memberName = nicknameFilterRegex.Replace(memberName, "");
                 foreach (string player in players)
                 {
                     if (memberName.Equals(player, StringComparison.InvariantCultureIgnoreCase))
