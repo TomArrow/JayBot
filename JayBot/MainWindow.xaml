@@ -32,6 +32,8 @@
                         <ComboBox Width="300" x:Name="msgSendChannelCombo"></ComboBox>
                     </WrapPanel>
                     <Button x:Name="msgSendSendBtn" Click="msgSendSendBtn_Click">Send</Button>
+                    <Button x:Name="msgSendWithFileBtn" Click="msgSendWithFileBtn_Click">Send with File</Button>
+                    
                 </StackPanel>
             </GroupBox>
             <TextBlock x:Name="silentLogTxt" TextWrapping="Wrap" ScrollViewer.CanContentScroll="True" Height="250" Background="LightGray"></TextBlock>

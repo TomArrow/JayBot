@@ -1,6 +1,7 @@
 ﻿using DSharpPlus;
 using DSharpPlus.Entities;
 using JayBot.SQLMappings;
+using Microsoft.Win32;
 using SQLite.Net2;
 using System;
 using System.Collections.Concurrent;
@@ -68,6 +69,16 @@ namespace JayBot
         Regex ratingPrefixRegex = new Regex(@"^\[\d+\] (.+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
         Regex playerExpiredRegex = new Regex(@"<@\s*(\d+)> were removed from all queues \(expire time ran off\)\.", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+
+        class ImageUploadWatcher
+        {
+            public Regex regex;
+            public string folder;
+            public FileSystemWatcher fsw;
+            public UInt64 channelId;
+        }
+
+        ConcurrentBag<ImageUploadWatcher> imageUploadWatchers = new ConcurrentBag<ImageUploadWatcher>();
         ConcurrentDictionary<UInt64, string[]> channels = new ConcurrentDictionary<ulong, string[]>();
         ConcurrentDictionary<UInt64, User> users = new ConcurrentDictionary<UInt64, User>();
         ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity> userChannelActivity = new ConcurrentDictionary<Tuple<UInt64, UInt64>, UserChannelActivity>();
@@ -121,6 +132,7 @@ namespace JayBot
                 MessageBox.Show("Error loading channels from channels.txt.");
                 return;
             }
+            loadImageUploadInfo();
 
             UInt64[] channelKeys = channels.Keys.ToArray();
             msgSendChannelCombo.ItemsSource = channelKeys;
@@ -186,16 +198,87 @@ namespace JayBot
 
             return true;
         }
+        private bool loadImageUploadInfo()
+        {
+            string[] channelInfo = File.ReadAllLines("imageuploads.txt");
+            if(channelInfo is null || channelInfo.Length == 0)
+            {
+                return false;
+            }
+            int channelsFound = 0;
+            foreach(string channel in channelInfo)
+            {
+                if (string.IsNullOrWhiteSpace(channel)) { continue;  }
+                string[] parts = channel.Split(';',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
+                if(parts is null || parts.Length < 3)
+                {
+                    continue;
+                }
+                UInt64 channelNum;
+                if (!UInt64.TryParse(parts[0], out channelNum))
+                {
+                    continue;
+                }
+                string folder = parts[1];
+                string regexString = parts[2];
+                if (!Directory.Exists(folder))
+                {
+                    continue;
+                }
+                try
+                {
+                    ImageUploadWatcher iuw = new ImageUploadWatcher();
+                    iuw.regex = new Regex(regexString, RegexOptions.Compiled | RegexOptions.IgnoreCase);
+                    iuw.folder = folder;
+                    iuw.channelId = channelNum;
+                    FileSystemWatcher fsw = new FileSystemWatcher(folder);
+                    iuw.fsw = fsw;
+                    fsw.EnableRaisingEvents = true;
+                    string localFolder = folder;
+                    fsw.Created += (a,b) => {
+                        CheckImageUpload(iuw,b);
+                    };
+                    imageUploadWatchers.Add(iuw);
+                } catch(Exception ex)
+                {
+                    continue;
+                }
+            }
 
-        Queue<Tuple<string,UInt64>> messagesToSend = new Queue<Tuple<string, UInt64>>();
+            return true;
+        }
+
+        private void CheckImageUpload(ImageUploadWatcher iuw, FileSystemEventArgs args)
+        {
+            if (!iuw.regex.Match(args.Name).Success)
+            {
+                Debug.WriteLine($"CheckImageUpload: Ignoring {args.Name}, no regex match.");
+                return;
+            }
+            Task.Run(()=> {
+                System.Threading.Thread.Sleep(5000); // wait in case its not done writing or sth? idk
+                FileToSend fts = new FileToSend();
+                fts.filename = System.IO.Path.GetFileName(args.FullPath);
+                fts.data = File.ReadAllBytes(args.FullPath);
+                enqueueMessage("",iuw.channelId,fts);
+            });
+        }
+
+        class FileToSend
+        {
+            public string filename;
+            public byte[] data;
+        }
+
+        Queue<Tuple<string,UInt64, FileToSend>> messagesToSend = new Queue<Tuple<string, UInt64, FileToSend>>();
         DateTime lastMessageSent = DateTime.UtcNow;
         int millisecondTimeout = 500;
         int millisecondBuffer = 2000;
-        private void enqueueMessage(string message, UInt64 channelId)
+        private void enqueueMessage(string message, UInt64 channelId, FileToSend file = null)
         {
             lock (messagesToSend)
             {
-                messagesToSend.Enqueue(new Tuple<string, ulong>(message,channelId));
+                messagesToSend.Enqueue(new Tuple<string, ulong, FileToSend>(message,channelId, file));
             }
         }
         private void startMessageRunner()
@@ -208,7 +291,7 @@ namespace JayBot
                     Thread.Sleep(50); // Kinda dumb solution but too lazy to do a proper promise thingie whatever things thangs
                     if ((DateTime.UtcNow - lastMessageSent).TotalMilliseconds < millisecondBuffer + millisecondTimeout) continue; // Shouldn't even be necessary but just to be safe.
                     //if (channelId == null) continue;
-                    Tuple<string, ulong> messageToSend = null;
+                    Tuple<string, ulong,FileToSend> messageToSend = null;
                     lock (messagesToSend)
                     {
                         if (messagesToSend.Count == 0) continue;
@@ -230,7 +313,25 @@ namespace JayBot
                         });
                     } else
                     {
-                        await discordClient.SendMessageAsync(channel, messageToSend.Item1);
+                        if(messageToSend.Item3 != null)
+                        {
+                            using (MemoryStream ms = new MemoryStream(messageToSend.Item3.data))
+                            {
+                                // uploading an image
+                                var msg = new DiscordMessageBuilder()
+                                    .WithContent(messageToSend.Item1);
+                                //.with
+                                //.WithFiles(new Dictionary<string, Stream>() { { messageToSend.Item3.filename, ms } });
+                                //.SendAsync(ctx.Channel);
+                                //msg.AddFile(ms, false);
+                                msg.AddFiles(new Dictionary<string, Stream>() { { messageToSend.Item3.filename, ms } });
+                                await msg.SendAsync(channel);
+                            }
+                        }
+                        else
+                        {
+                            await discordClient.SendMessageAsync(channel, messageToSend.Item1);
+                        }
                     }
                     lastMessageSent = DateTime.UtcNow;
                 }
@@ -1151,6 +1252,24 @@ namespace JayBot
             string msg = msgSendMsgTxt.Text;
             if (string.IsNullOrWhiteSpace(msg)) return;
             enqueueMessage(msg,channelId.Value);
+        }
+        private void msgSendWithFileBtn_Click(object sender, RoutedEventArgs e)
+        {
+
+            UInt64? channelId = msgSendChannelCombo.SelectedItem as UInt64?;
+            if (channelId is null) return;
+            if (!channels.ContainsKey(channelId.Value)) return;
+            string msg = msgSendMsgTxt.Text;
+            if (string.IsNullOrWhiteSpace(msg)) return;
+            OpenFileDialog ofd = new OpenFileDialog();
+            if(ofd.ShowDialog() == true)
+            {
+                FileToSend fts = new FileToSend();
+                fts.filename = System.IO.Path.GetFileName(ofd.FileName);
+                fts.data = File.ReadAllBytes(ofd.FileName);
+                enqueueMessage(msg, channelId.Value, fts);
+            }
+
         }
 
     }
